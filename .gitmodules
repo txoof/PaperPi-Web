@@ -1,0 +1,3 @@
+[submodule "pyenv_utilities"]
+	path = pyenv_utilities
+	url = https://github.com/txoof/pyenv_utilities.git
