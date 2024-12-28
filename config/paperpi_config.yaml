@@ -1,0 +1,23 @@
+CONFIG_VERSION: 2
+
+main:
+    # Waveshare display type (use "HD" for IT8951 displays)
+    display_type: Unset  # Equivalent to None in YAML
+    # Required vcom value for IT8951 screens
+    vcom: 0.0
+    # Maximum refresh between total screen clear for HD displays
+    max_refresh: 4
+    # Logging output level
+    log_level: WARNING
+    # Display splash screen (True or False)
+    splash: true
+    # Rotation of EPD display (0, -90, 90, 180)
+    rotation: 0
+    # Mirror screen output (true/false)
+    mirror: false
+    # Disable RGB color support for 7-color screens (Default: true)
+    color: false
+    # Disable screen wipe at shutdown (Default: true)
+    no_wipe: false
+    # Plugin timeout in seconds
+    plugin_timeout: 30

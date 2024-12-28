@@ -1,0 +1,33 @@
+main:
+    display_type:
+        type: str
+        default: Unset
+        required: true
+    vcom:
+        type: float
+        default: -1.0
+        range: [-5.0, 0.0]
+    log_level:
+        type: str
+        default: "WARNING"
+        allowed: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    splash:
+        type: bool
+        default: true
+    rotation:
+        type: int
+        default: 0
+        allowed: [0, 90, 180, -90]
+    mirror:
+        type: bool
+        default: false
+    color:
+        type: bool
+        default: false
+    no_wipe:
+        type: bool
+        default: true
+    plugin_timeout:
+        type: int
+        default: 30
+        range: [0, 600]
