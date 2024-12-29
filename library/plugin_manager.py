@@ -295,7 +295,7 @@ class PluginManager:
                 # Instantiate BasePlugin with **base_config and pass plugin_params to config
                 plugin_instance = BasePlugin(
                     **base_config,
-                    config=plugin_params  # Pass plugin_params as config
+                    config=plugin_params,  # Pass plugin_params as config
                 )
     
                 plugin_instance.update_function = base_config['update_function']
@@ -336,19 +336,20 @@ m.main_schema_file = 'main_schema.yaml'
 m.plugin_schema_file = 'plugin_schema.yaml'
 
 config = {
-    'display_type': 'L',
-    'resolution': (800, 480),
+    'screen_mode': 'L',
+    'resolution': (160, 190),
 }
 
 configured_plugins = [
     {'plugin': 'basic_clock',
-     'base_config': {
-        'name': 'Basic Clock',
-        'duration': 100,
-        'refresh_interval': 60,
-        'dormant': False,
-        'layout': 'layout',
-     }},
+         'base_config': {
+            'name': 'Basic Clock',
+            'duration': 100,
+            'refresh_interval': 60,
+            'dormant': False,
+            'layout': 'layout',
+         }
+    },
     {'plugin': 'word_clock',
         'base_config':{
             'name': 'Word Clock',
@@ -360,311 +361,32 @@ configured_plugins = [
             'foo': 'bar',
             'spam': 7,
             'username': 'Monty'}
+    },
+    {'plugin': 'xkcd_comic',
+        'base_config': {
+            'name': 'XKCD',
+            'duration': 200,
+            'refresh_interval': 1800,
+            'dormant': False,
+            'layout': 'layout'
+        },
+        'plugin_params':{
+            'max_x': 800,
+            'max_y': 600,
+            'resize': False,
+            'max_retries': 5
+        }
+             
     }
 ]
+m.config = config
 m.configured_plugins = configured_plugins
 
 m.configured_plugins
 
 m.load_plugins()
-# -
-
-z = m.active_plugins[0]
-
-m.active_plugins[1].config
-
-p = BasePlugin(**z)
-
-p.update()
-p.image
-
-m.active_plugins[0].update()
-m.active_plugins[0].image
-
-hasattr(z.plugin, 'update_function')
-
-z.plugin.
-
-z = '.'.join([m.plugin_path.name, 'word_clock'])
-q = import_module(z)
-
-hasattr(q.plugin, 'update_function')
-
-q.layout.layout
-
-
-def load_plugins(self):
-    """
-    Locate and load plugins based on the configured_plugins property.
-    """
-    active_plugins = []
-    dormant_plugins = []
-
-    for entry in self.configured_plugins:
-        plugin = entry['plugin']
-        plugin_config = entry['config']
-        plugin_name = plugin_config['name']
-        plugin_path = self.plugin_path / plugin 
-        plugin_file = plugin_path / 'plugin.py'
-        logger.info(f"Loading plugin {plugin_name} of type {plugin} in path {plugin_path}")
-
-        if not plugin_path.is_dir() or not plugin_file.is_file():
-            logger.warning(f"Plugin {plugin_name} not found at {plugin_dir}. Skipping.")
-            continue
-        
-        try:
-            # Import the plugin module dynamically as part of the plugins package
-            import_str = '.'.join([self.plugin_path.name, plugin, 'plugin'])
-            module = import_module(import_str)
-        except Exception as e:
-            logger.warning(e)
-
-    #         # Attach the update function from the module
-    #         if hasattr(module, 'update_function'):
-    #             plugin_config['update_function'] = module.update_function
-    #         else:
-    #             logger.warning(f"{plugin_name}: update_function not found. Skipping plugin.")
-    #             continue
-
-    #         # Load layout (if specified) from the plugin module
-    #         if 'layout' in plugin_config:
-    #             layout_name = plugin_config['layout']
-    #             if hasattr(module.layout, layout_name):
-    #                 layout = getattr(module.layout, layout_name)
-    #                 plugin_config['layout'] = layout
-    #             else:
-    #                 raise AttributeError(f"Layout '{layout_name}' not found in {plugin_name}")
-
-    #         # Instantiate BasePlugin and assign update_function
-    #         plugin_instance = BasePlugin(
-    #             name=plugin_config.get('name', plugin_name),
-    #             duration=plugin_config.get('duration', 60),
-    #             config=plugin_config,
-    #             refresh_interval=plugin_config.get('refresh_interval', 30),
-    #             force_onebit=plugin_config.get('force_onebit', False),
-    #             cache_dir=plugin_config.get('cache_dir', None)
-    #         )
-    #         plugin_instance.update_function = plugin_config['update_function']
-
-    #         # Sort into active or dormant
-    #         if plugin_config.get('dormant', False):
-    #             self.dormant_plugins.append(plugin_instance)
-    #             logger.info(f"Loaded dormant plugin: {plugin_name}")
-    #         else:
-    #             self.active_plugins.append(plugin_instance)
-    #             logger.info(f"Loaded active plugin: {plugin_name}")
-
-    #     except ModuleNotFoundError as e:
-    #         logger.warning(f"Error: {e} while loading {plugin_name}. Skipping plugin.")
-    #         continue
-    #     except AttributeError as e:
-    #         logger.warning(f"{e}. Skipping plugin: {plugin_name}")
-    #         continue
-    #     except KeyError:
-    #         logger.info(f"{plugin_name}: No module specified, skipping.")
-    #         continue
-    #     except Exception as e:
-    #         logger.error(f"{plugin_name} failed to load due to error: {e}. Skipping plugin.")
-    #         continue
-
-    # logger.info(f"Loaded {len(self.active_plugins)} active plugins and {len(self.dormant_plugins)} dormant plugins.")
-
-
-class dummy:
-    def __init__(self):
-        pass
-c = dummy()
-c.configured_plugins = m.configured_plugins
-c.plugin_path = m.plugin_path
-load_plugins(c)
-
-
 
 # +
+m.active_plugins[2].update()
 
-# self.update_function = self.default_update_function
-# self.name = name
-# self.duration = duration
-# self.refresh_interval = refresh_interval
-# self.plugin_timeout = plugin_timeout
-# self.dormant = dormant
-# self.last_updated = 0
-# self.active = False
-# self.resolution = resolution
-# self.screen_mode = screen_mode
-# self.force_onebit = force_onebit
-# self.image = None
-# self.config = config
-# self.data = {}
-# self.agent_string = "PaperPi"
-# self.layout = layout
-# self.update_data = None
-# -
-
-m.validate_config(m.config, m.plugin_manager_schema, 'base plugin schema')
-
-m.plugin_path
-
-
-
-# ## fix me!
-#
-# The code below should be used to load configuration from the user/system config and then use it to setup the plugin when it is created.
-#
-
-
-    def load_base_schema(self):
-        """
-        Load and validate base configuration using the global schema at 
-        PaperPi/config/plugin_schema.yaml.
-        
-        Raises:
-            PluginError: If base config fails critical validation.
-        """
-        schema_file = Path(self.base_config_path) / 'plugin_schema.yaml'
-        logger.info(f'Loading base plugin schema: {schema_file}')
-
-        if not schema_file.is_file():
-            logger.error(f"Base schema {schema_file} missing. Cannot proceed.")
-            raise FileError("Base schema is required but missing.")
-
-        try:
-            with open(schema_file, 'r') as f:
-                schema = yaml.safe_load(f)
-
-            base_schema = schema.get('base_config', {})
-            if not base_schema:
-                raise ConfigurationError(f'Error locating "base_config" section in {schema_file}')
-            self.validate_schema(self.config, base_schema, "Base Config")
-
-        except Exception as e:
-            msg = f"{self.name} - Error loading base schema: {e}"
-            logger.error(msg)
-            raise PluginError(msg, plugin_name=self.name)
-
-    def load_plugin_schema(self):
-        """
-        Load and validate plugin configuration using plugin_config.yaml
-        in the plugin directory.
-        
-        Raises:
-            PluginError: If plugin config fails validation.
-        """
-        schema_file = self.plugin_path / 'plugin_config.yaml'
-
-        if not schema_file.is_file():
-            logger.warning(f"{self.name} - plugin_config.yaml not found. Skipping plugin config validation.")
-            return
-
-        try:
-            with open(schema_file, 'r') as f:
-                schema = yaml.safe_load(f)
-
-            plugin_schema = schema.get('plugin_config', {})
-            # additional configuration is not required for plugins
-            if plugin_schema:
-                self.validate_schema(self.config, plugin_schema, "Plugin Config")
-            else:
-                pass
-
-        except Exception as e:
-            msg = f"{self.name} - Error loading plugin schema: {e}"
-            logger.error(msg)
-            raise PluginError(msg, plugin_name=self.name)
-
-    def validate_schema(self, config, schema, schema_name):
-        """
-        Validate a configuration dictionary against a schema.
-
-        Args:
-            config (dict): Configuration to validate.
-            schema (dict): Schema for validation.
-            schema_name (str): Name of the schema for logging.
-
-        Raises:
-            PluginError: If required fields are missing or invalid.
-        """
-        for key, params in schema.items():
-            # Apply defaults if missing
-            if key not in config:
-                config[key] = params.get('default')
-                logger.info(f"{schema_name} - {key} set to default: {config[key]}")
-
-            value = config[key]
-            expected_type = eval(params['type'])
-
-            # Type check
-            if not isinstance(value, expected_type):
-                msg = f"{schema_name} - {key} must be of type {expected_type}."
-                logger.error(msg)
-                raise PluginError(msg, plugin_name=self.name)
-
-            # Allowed values
-            allowed = params.get('allowed')
-            if allowed and value not in allowed:
-                msg = f"{schema_name} - {key} must be one of {allowed}."
-                logger.error(msg)
-                raise PluginError(msg, plugin_name=self.name)
-
-            # Required field missing
-            if params.get('required') and value is None:
-                msg = f"{schema_name} - {key} is required but missing."
-                logger.error(msg)
-                raise PluginError(msg, plugin_name=self.name)
-
-    def load_update_function(self):
-        """
-        Dynamically load the update_function from plugin.py in the plugin directory.
-        Treats the plugin directory as a package to handle relative imports.
-        """
-        plugin_name = self.plugin_path.stem  # e.g., 'basic_clock'
-        plugin_parent = str(self.plugin_path.parent)  # e.g., ../plugins
-    
-        if not (self.plugin_path / '__init__.py').is_file():
-            msg = f"{plugin_name} - Missing __init__.py. Cannot load plugin as a package."
-            logger.error(msg)
-            raise PluginError(msg, plugin_name=self.name)
-    
-        try:
-            # Add the parent directory to sys.path for package-level imports
-            if plugin_parent not in sys.path:
-                sys.path.insert(0, plugin_parent)
-    
-            # Import the plugin module dynamically as a package
-            module = importlib.import_module(f"{plugin_name}.plugin")
-    
-            if hasattr(module, 'update_function'):
-                self.update_function = module.update_function.__get__(self)
-                logger.info(f"{plugin_name} - update_function successfully loaded.")
-            else:
-                msg = f"{plugin_name} - update_function not found in plugin.py"
-                logger.error(msg)
-                raise PluginError(msg, plugin_name=self.name)
-    
-        except Exception as e:
-            msg = f"{plugin_name} - Failed to load update_function: {e}"
-            logger.error(msg)
-            raise PluginError(msg, plugin_name=self.name)
-
-# +
-
-    @property
-    def plugin_path(self):
-        return self._plugin_path
-
-    @plugin_path.setter
-    def plugin_path(self, value):
-        if not value:
-            self._plugin_path = None
-            return
-        
-        if not isinstance(value, (str, Path)):
-            raise TypeError('Must be of type str or Path')
-        value = Path(value)
-        if not value.is_dir():
-            raise FileError('Plugin directory does not exist')
-
-        self._plugin_path = value
-        self.load_update_function()
-    
-
+m.active_plugins[2].image
