@@ -1,0 +1,24 @@
+# main configuration for plugin manager and all plugins
+display_type:
+    type: str
+    default: '1'
+    allowed: ['1', 'L', 'RGB']
+    required: true
+    description: 'Display Type - 1: Monochrome, L: Grayscale, RGB: Red, Green, Blue'
+dormant:
+    type: bool
+    default: false
+    description: 'Dormant plugins only display when required (e.g. when Spotify is actively playing)'
+resolution:
+    type: tuple
+    default: (800, 480)
+    required: true
+    description: 'Resolution of screen; this is automaitcally detrmined by the display driver'
+cache_expire:
+    type: int
+    default: 2
+    description: 'Time in days to keep cached content'
+cache_root:
+    type: str
+    default: '/tmp/PaperPi_cache/'
+    description: 'Root of cache directory'
