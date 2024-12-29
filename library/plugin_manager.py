@@ -16,6 +16,7 @@
 from pathlib import Path
 import yaml
 import logging
+import uuid
 
 try:
     from .exceptions import PluginError, ImageError, PluginTimeoutError, FileError, ConfigurationError
@@ -50,70 +51,238 @@ def setup_notebook_logging(level=logging.DEBUG):
 # Run this cell to enable logging
 setup_notebook_logging()
 
-
 # +
+import yaml
+from pathlib import Path
+import logging
+
+
 class PluginManager:
     def __init__(
         self,
-        config: dict={},
-        plugin_path: Path=None,
-        base_config_path: Path=None
+        config: dict = None,
+        plugin_path: Path = None,
+        config_path: Path = None,
+        main_schema_file: str = None,
+        plugin_schema_file: str = None,
     ):
-        """
-        Initialize the PluginManager.
-    
-        Args:
-            config (dict): Dictionary containing plugin configuration.
-            plugin_path (Path): Path to the directory containing plugins.
-            base_config_path (Path): Path to base configuration schema for validation.
-        """
-        # Create a logger for this class/module
-        logger.debug("PluginManager instance created.")        
-        self._base_schema = None
-        self.config = config
+        self.logger = logging.getLogger(__name__)
+        self._config = {}
+        self._configured_plugins = []        
         self.plugin_path = plugin_path
-        self.base_config_path = base_config_path
-        self.active_plugins = []
-        self.dormant_plugins = []
+        self.config_path = config_path
+        self.main_schema_file = main_schema_file
+        self.plugin_schema_file = plugin_schema_file
+        self._main_schema = None
+        self._plugin_schema = None
+
+        # Initialize config if provided
+        if config:
+            self.config = config
+
+        self.logger.debug("PluginManager initialized with default values.")
 
     @property
-    def base_config_path(self):
-        return self._base_config_path
+    def config(self):
+        return self._config
 
-    @base_config_path.setter
-    def base_config_path(self, value):
+    @config.setter
+    def config(self, value):
+        if not isinstance(value, dict):
+            raise TypeError("Config must be a dictionary.")
+        
+        schema = self.main_schema
+        if schema:
+            self.logger.info("Validating config against main schema...")
+            self._validate_config(value, schema)
+
+        self._config = value
+        self.logger.info("Configuration successfully updated.")
+
+    @property
+    def config_path(self):
+        return self._config_path
+
+    @config_path.setter
+    def config_path(self, value):
         if not value:
-            raise ValueError("base_config_path cannot be empty.")
-            
+            self.logger.warning("Config path set to None. Schema loading disabled.")
+            self._config_path = None
+            return
+
         if not isinstance(value, Path):
             value = Path(value)
 
-        if not value.is_file():
-            raise FileNotFoundError(f"Schema file not found at {value}")
+        if not value.is_dir():
+            raise FileNotFoundError(f"Config directory not found at {value}")
 
-        self._base_config_path = value
-        # Invalidate cached schema to trigger reload
-        self._base_schema = None 
+        self._config_path = value
+        self._main_schema = None
+        self._plugin_schema = None
+        self.logger.info(f"Config path set to {self._config_path}")
 
     @property
-    def base_schema(self):
-        if self._base_schema is None:
-            logger.info(f"Loading base config schema from {self._base_config_path}")
-            with open(self._base_config_path, 'r') as f:
-                self._base_schema = yaml.safe_load(f)
-        return self._base_schema
-    
+    def main_schema(self):
+        if self._main_schema is None:
+            if not self._config_path or not self.main_schema_file:
+                self.logger.warning("Config path or main schema file not set.")
+                return {}
 
+            schema_file = self._config_path / self.main_schema_file
+            if not schema_file.is_file():
+                raise FileNotFoundError(f"Main schema file not found at {schema_file}")
+
+            self.logger.info(f"Loading main config schema from {schema_file}")
+            with open(schema_file, "r") as f:
+                self._main_schema = yaml.safe_load(f)
+        return self._main_schema
+
+    @property
+    def plugin_schema(self):
+        if self._plugin_schema is None:
+            if not self._config_path or not self.plugin_schema_file:
+                self.logger.warning("Config path or plugin schema file not set.")
+                return {}
+
+            schema_file = self._config_path / self.plugin_schema_file
+            if not schema_file.is_file():
+                raise FileNotFoundError(f"Plugin schema file not found at {schema_file}")
+
+            self.logger.info(f"Loading plugin schema from {schema_file}")
+            with open(schema_file, "r") as f:
+                self._plugin_schema = yaml.safe_load(f)
+        return self._plugin_schema
+
+    @property
+    def configured_plugins(self):
+        return self._configured_plugins
+
+    @configured_plugins.setter
+    def configured_plugins(self, value):
+        if not isinstance(value, list):
+            raise TypeError("configured_plugins must be a list of plugin configurations.")
+
+        for plugin_entry in value:
+            if not isinstance(plugin_entry, dict) or 'plugin' not in plugin_entry or 'config' not in plugin_entry:
+                raise ValueError("Each entry in configured_plugins must be a dict with 'plugin' and 'config' keys.")
+
+            
+            # Always assign a new UUID (overwriting existing one)
+            plugin_uuid = str(uuid.uuid4())[:8]
+            plugin_entry['config']['uuid'] = plugin_uuid
+            self.logger.info(f"Assigned UUID {plugin_entry['config']['uuid']} to plugin {plugin_entry['plugin']}.")
+            
+            # Validate the config against the plugin schema
+            schema = self.plugin_schema.get('plugin_config', {})
+            self._validate_config(plugin_entry['config'], schema)
+
+            # final setup and validation
+            if not plugin_entry.get('config', {}).get('name', None):
+                name = plugin_entry.get('plugin') + '-' + plugin_uuid
+                logger.info(f'No human readable plugin name set. Using: {name}')
+                plugin_entry['config']['name'] = plugin_entry.get('plugin')
+        
+        self._configured_plugins = value
+        self.logger.info("configured_plugins successfully validated and set.")
+    
+    def reload_schemas(self):
+        """
+        Force reload of main and plugin schemas.
+        """
+        self._main_schema = None
+        self._plugin_schema = None
+        self.logger.info("Schemas reloaded.")
+
+    def _validate_config(self, config, schema):
+        """
+        Validate configuration against a schema.
+        
+        Args:
+            config (dict): Configuration to validate.
+            schema (dict): Schema to validate against.
+
+        Raises:
+            ValueError: If the config does not match the schema.
+        """
+        errors = []
+        
+        for key, params in schema.items():
+            description = params.get('description', 'No description available')
+            if key not in config:
+                if params.get('required', False):
+                    errors.append(f"{key} is required but missing. Description: {description}")
+                else:
+                    config[key] = params.get('default')
+            else:
+                value = config[key]
+                expected_type = eval(params['type'])
+
+                # Type check
+                if not isinstance(value, expected_type):
+                    errors.append(f"{key} must be of type {expected_type.__name__} (got {type(value).__name__}). Description: {description}")
+
+                # Allowed values check
+                allowed = params.get('allowed')
+                if allowed and value not in allowed:
+                    errors.append(f"{key} must be one of {allowed} (got {value}). Description: {description}")
+
+        if errors:
+            raise ValueError("Config validation failed:\n" + "\n".join(errors))
+
+        self.logger.info("Config passed schema validation.")
 # -
 
-m = PluginManager(
-    config={}, 
-    plugin_path='../plugins', 
-    base_config_path='../config/plugin_schema.yaml')
+m = PluginManager()
 
+# +
+m.plugin_path = '../plugins/'
+m.config_path = '../config/'
+m.main_schema_file = 'main_schema.yaml'
+m.plugin_schema_file = 'plugin_schema.yaml'
 
+config = {
+    'display_type': 'L',
+    'resolution': (800, 480),
+}
+# -
 
-m.base_schema
+configured_plugins = [
+    {'plugin': 'basic_clock',
+     'config': {
+        'name': 'Basic Clock',
+        'duration': 100,
+        'refresh_interval': 60,
+        'dormant': False,
+        'layout': 'layout',
+        'uuid': None
+     }}
+]
+m.configured_plugins = configured_plugins
+
+m.configured_plugins
+
+# +
+
+# self.update_function = self.default_update_function
+# self.name = name
+# self.duration = duration
+# self.refresh_interval = refresh_interval
+# self.plugin_timeout = plugin_timeout
+# self.dormant = dormant
+# self.last_updated = 0
+# self.active = False
+# self.resolution = resolution
+# self.screen_mode = screen_mode
+# self.force_onebit = force_onebit
+# self.image = None
+# self.config = config
+# self.data = {}
+# self.agent_string = "PaperPi"
+# self.layout = layout
+# self.update_data = None
+# -
+
+m.validate_config(m.config, m.plugin_manager_schema, 'base plugin schema')
 
 m.plugin_path
 
