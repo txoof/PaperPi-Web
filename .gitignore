@@ -1,3 +1,4 @@
+ToDo*
 *.pyo
 .python-version
 tmp/*
@@ -11,3 +12,5 @@ paperpi/IT8951
 venv_activate
 **/*-venv-*/
 .*kernelspec
+library/wip*.ipynb
+library/wip*.py

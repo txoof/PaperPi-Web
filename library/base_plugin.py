@@ -24,6 +24,7 @@ import logging
 import time
 import signal
 import hashlib
+from uuid import uuid4
 import sys
 import yaml
 
@@ -84,6 +85,7 @@ class BasePlugin():
     def __init__(
         self,
         name: str = 'Unset',
+        uuid: str = None,
         duration: int = 90,
         config: dict = {},
         resolution: tuple =(800, 480),
@@ -94,17 +96,19 @@ class BasePlugin():
         dormant: bool = False,
         cache_expire: int = 2,
         cache_dir: Path = None,
-        cache_root: Path = Path('/tmp/BasePlugin_cache/'),
+        cache_root: Path = None,
         layout: dict = {},
         *args,
         **kwargs,
         
     ):
         # Create a logger for this class/module
-       
-        logger.debug("BasePlugin instance created.")        
-        self.update_function = self.default_update_function
         self.name = name
+        self.uuid = uuid or 'self_set-' + str(uuid4())[:8]
+        logger.debug("BasePlugin instance created.")
+        logger.debug(f"Name: {self.name}, uuid: {self.uuid}")
+        self.update_function = self.default_update_function
+        
         self.duration = duration
         self.refresh_interval = refresh_interval
         self.plugin_timeout = plugin_timeout
@@ -128,6 +132,7 @@ class BasePlugin():
         # Cache expiration (handled after session initialization)
         self.cache_expire = cache_expire  
 
+        self.high_priority = False
         # # load the update_function
         # if self.plugin_path:
         #     self.load_update_function()
@@ -338,6 +343,9 @@ class BasePlugin():
             raise ValueError(f'Resolution must have length == 2')
         if not all(isinstance(v, int) for v in value):
             raise ValueError('Resolution values must be type int')
+        for i in value:
+            if i <=0:
+                raise ValueError('Resolution values must be > 0')
 
         self._resolution = value
 
@@ -391,6 +399,7 @@ class BasePlugin():
         """
         elapsed_time = time.monotonic() - self.last_updated
         remaining_time = self.refresh_interval - elapsed_time
+        # remaining_time = elapsed_time - self.refresh_interval
         return max(remaining_time, 0)  # Return 0 if already ready
     
     @property
@@ -400,13 +409,27 @@ class BasePlugin():
     @cache_expire.setter
     def cache_expire(self, value):
         if not isinstance(value, (int, float)):
-            raise PluginError(f"Invalid cache_expire value: '{value}' must be an integer/float", plugin_name=self.name)
+            raise TypeError(f"Invalid cache_expire value: '{value}' must be an integer/float")
         if value <= 0:
-            raise PluginError(f"cache_expire must be > 0", plugin_name=self.name)
+            raise ValueError(f"cache_expire must be > 0")
         self._cache_expire = value
 
         logger.info(f"{self.name} - Cache expiration set to {self.cache_expire} days.")
 
+    @property
+    def cache_root(self):
+        return self._cache_root
+
+    @cache_root.setter
+    def cache_root(self, value):
+        if not value:
+            value = Path('/tmp/BasePlugin_cache/')
+            
+        if not isinstance(value, (Path, str)):
+            raise TypeError(f"Invalid cache_root value: '{value}' must be a string or Path.")
+        self._cache_root = Path(value)
+        self._cache_root.mkdir(parents=True, exist_ok=True)
+        
     @property
     def cache_dir(self):
         return self._cache_dir
@@ -416,7 +439,7 @@ class BasePlugin():
         if not value:
             value = self.cache_root / self.name
         if not isinstance(value, (Path, str)):
-            raise PluginError(f"Invalid cache_dir value: '{value}' must be a string or Path.", plugin_name=self.name)
+            raise TypeError(f"Invalid cache_dir value: '{value}' must be a string or Path.")
         logger.info(f"{self.name} - Using cache directory: {value}")
         self._cache_dir = self.cache_root / value
         self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -471,8 +494,6 @@ class BasePlugin():
     def timeout_handler(self, signum, frame):
         """Raise a timeout error when the plugin update hangs."""
         raise PluginTimeoutError("Plugin update timed out.", plugin_name=self.name)
-
-
 
 # +
 # import random
