@@ -95,7 +95,9 @@ class BasePlugin():
         cache_expire: int = 2,
         cache_dir: Path = None,
         cache_root: Path = Path('/tmp/BasePlugin_cache/'),
-        layout: dict = {}
+        layout: dict = {},
+        *args,
+        **kwargs,
         
     ):
         # Create a logger for this class/module
