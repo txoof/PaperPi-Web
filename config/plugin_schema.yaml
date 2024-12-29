@@ -15,6 +15,10 @@ plugin_config:
     force_onebit:
         type: bool
         default: false
+    screen_mode:
+        type: str
+        default: 'L'
+        allowed: ['1', 'L', 'RGB']
     dormant:
         type: bool
         default: false

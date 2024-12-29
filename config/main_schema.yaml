@@ -1,14 +1,10 @@
 # main configuration for plugin manager and all plugins
-display_type:
+screen_mode:
     type: str
     default: '1'
     allowed: ['1', 'L', 'RGB']
     required: true
     description: 'Display Type - 1: Monochrome, L: Grayscale, RGB: Red, Green, Blue'
-dormant:
-    type: bool
-    default: false
-    description: 'Dormant plugins only display when required (e.g. when Spotify is actively playing)'
 resolution:
     type: tuple
     default: (800, 480)
