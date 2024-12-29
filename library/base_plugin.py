@@ -95,7 +95,7 @@ class BasePlugin():
         cache_expire: int = 2,
         cache_dir: Path = None,
         cache_root: Path = Path('/tmp/BasePlugin_cache/'),
-        layout_data: dict = {}
+        layout: dict = {}
         
     ):
         # Create a logger for this class/module
@@ -116,7 +116,7 @@ class BasePlugin():
         self.config = config
         self.data = {}
         self.agent_string = "PaperPi"
-        self.layout_data = layout_data
+        self.layout = layout
         self.update_data = None
 
         # Cache directory (initialize before cache session)
@@ -420,11 +420,11 @@ class BasePlugin():
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     @property
-    def layout_data(self):
-        return self._layout_data
+    def layout(self):
+        return self._layout
 
-    @layout_data.setter
-    def layout_data(self, layout):
+    @layout.setter
+    def layout(self, layout):
         if not isinstance(layout, dict):
             raise TypeError('Must be type dict')
         # convert layout blocks to RGB when possible
@@ -433,12 +433,12 @@ class BasePlugin():
                 logging.info(f'Converting {block} to RGB')
                 values['mode'] = 'RGB'
 
-        self._layout_data = layout
+        self._layout = layout
 
         # reset the layout object when the layout is updated.
         self.epd_layout = Layout(
             resolution=self.resolution,
-            layout=self._layout_data,
+            layout=self._layout,
             force_onebit=self.force_onebit,
             mode=self.screen_mode
         )
@@ -550,7 +550,7 @@ class BasePlugin():
 #     config={},
 #     plugin_timeout = 5,
 #     screen_mode = 'RGB',
-#     layout_data = layout,
+#     layout = layout,
 #     dormant=True
 # )
 
