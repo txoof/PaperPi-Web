@@ -1,0 +1,34 @@
+# sample_config = '''
+# [Plugin: XKCD Comic Plugin]
+# # default layout
+# layout = layout
+# plugin = xkcd_comic
+# refresh_rate = 1200
+# min_display_time = 120
+# # maximum x dimension of comic image
+# max_x = 800
+# # maximum y dimension of comic image
+# max_y = 600
+# # max attempts to find a suitable comic image
+# # 0 do not rsize small comics / 1 maximize small comics to max_x, max_y
+# resize = 0
+# max_retries = 10
+# max_priority = 2
+# '''
+
+max_x:
+  type: int
+  default: 800
+  description: 'Maximum X dimensions to consider for selected comic'
+max_y:
+  type: int
+  default: 600
+  description: 'Maximum Y dimensions to consider for selected comic'
+resize:
+  type: bool
+  default: false
+  description: 'True: Resize small comics (upscale), False: Do not resize'
+max_retries:
+  type: int
+  default: 10
+  description: 'Maximum number of tries to choose a comic before skipping update'
