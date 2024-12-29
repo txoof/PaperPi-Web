@@ -1,0 +1,7 @@
+# Basic Clock
+# Default configuration with suggested settings for this plugin
+name: Basic Clock
+layout: layout
+duration: 120
+refresh_interval: 60
+description: 'Basic digit clock'
