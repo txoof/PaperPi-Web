@@ -1,0 +1,21 @@
+plugin_config:
+    name:
+        type: str
+        default: null
+        description: 'Human readable plugin identifier'
+    layout:
+        type: str
+        default: layout
+        required: true
+        description: 'Layout to use for displaying plugin'
+    cache_dir:
+        type: str
+        default: null
+        description: 'Location within the cache to store cached content for this plugin'
+    force_onebit:
+        type: bool
+        default: false
+    dormant:
+        type: bool
+        default: false
+        description: 'Dormant plugins only display when required (e.g. when Spotify is actively playing)'
