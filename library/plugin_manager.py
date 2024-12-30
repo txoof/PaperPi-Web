@@ -57,6 +57,9 @@ def setup_notebook_logging(level=logging.DEBUG):
 
 # Run this cell to enable logging
 setup_notebook_logging()
+# -
+
+setup_notebook_logging(logging.INFO)
 
 # +
 import yaml
@@ -187,26 +190,28 @@ class PluginManager:
     def configured_plugins(self, value):
         if not isinstance(value, list):
             raise TypeError("configured_plugins must be a list of plugin configurations.")
-
+    
         for plugin_entry in value:
-            if not isinstance(plugin_entry, dict) or 'plugin' not in plugin_entry or 'base_config' not in plugin_entry:
-                raise ValueError("Each entry in configured_plugins must be a dict with 'plugin' and 'config' keys.")
+            plugin_name = plugin_entry['plugin']
+            base_config = plugin_entry['base_config']
+    
+            # 1. Validate Against Global Plugin Schema (Mandatory)
+            global_schema = self.plugin_schema.get('plugin_config', {})
+            logger.info("=" * 40)
+            logger.info(f"Validating {plugin_name} against global schema...")
+            self._validate_config(base_config, global_schema)
 
-            
-            # Always assign a new UUID (overwriting existing one)
+            # Assign UUID and final setup
             plugin_uuid = str(uuid.uuid4())[:8]
-            plugin_entry['base_config']['uuid'] = plugin_uuid
-            logger.info(f"Assigned UUID {plugin_entry['base_config']['uuid']} to plugin {plugin_entry['plugin']}.")
-            
-            # Validate the config against the plugin schema
-            schema = self.plugin_schema.get('plugin_config', {})
-            self._validate_config(plugin_entry['base_config'], schema)
-
-            # final setup and validation
-            if not plugin_entry.get('base_config', {}).get('name', None):
-                name = plugin_entry.get('plugin') + '-' + plugin_uuid
-                logger.info(f'No human readable plugin name set. Using: {name}')
-                plugin_entry['base_config']['name'] = plugin_entry.get('plugin')
+            base_config['uuid'] = plugin_uuid
+            logger.info(f"Assigned UUID {plugin_uuid} to plugin {plugin_name}.")
+    
+            if not base_config.get('name'):
+                base_config['name'] = f"{plugin_name}-{plugin_uuid}"
+                logger.info(f"Set default plugin name to {base_config['name']}.")
+    
+        self._configured_plugins = value
+        logger.info("All plugins validated and configured.")
         
         self._configured_plugins = value
         logger.info("configured_plugins successfully validated and set.")
@@ -219,6 +224,21 @@ class PluginManager:
         self._plugin_schema = None
         logger.info("Schemas reloaded.")
 
+    def _load_plugin_schema(self, plugin_name):
+        """
+        Load the plugin-specific schema if it exists.
+        """
+        plugin_dir = self.plugin_path / plugin_name
+        schema_file = plugin_dir / self.plugin_schema_file  # e.g., plugin_schema.yaml
+    
+        if schema_file.exists():
+            logger.info(f"Loading plugin-specific schema for {plugin_name} from {schema_file}...")
+            with open(schema_file, "r") as f:
+                return yaml.safe_load(f)
+        else:
+            logger.info(f"No plugin-specific schema found for {plugin_name}. Skipping additional validation.")
+            return {}
+    
     def _validate_config(self, config, schema):
         """
         Validate configuration against a schema.
@@ -260,27 +280,34 @@ class PluginManager:
     def load_plugins(self):
         """
         Locate and load plugins based on the configured_plugins property.
+        Only load plugins that pass global and plugin-specific schema validation.
         """
         self.active_plugins = []
         self.dormant_plugins = []
-    
+        
         for entry in self.configured_plugins:
             plugin_name = entry['plugin']
             base_config = entry['base_config']
             plugin_params = entry.get('plugin_params', {})  # Defaults to empty if missing
-    
+        
             try:
-                # Import the plugin module dynamically as part of the plugins package
-                module = import_module(f'plugins.{plugin_name}')
+                # 1. Validate Against Plugin-Specific Schema
+                plugin_specific_schema = self._load_plugin_schema(plugin_name)
+                if plugin_specific_schema:
+                    logger.info(f"Validating {plugin_name} against its specific schema...")
+                    self._validate_config(plugin_params, plugin_specific_schema)
     
-                # Attach the update function from the module
+                # 2. Import the plugin module dynamically
+                module = import_module(f'plugins.{plugin_name}')
+        
+                # 3. Attach the update function from the module
                 if hasattr(module.plugin, 'update_function'):
                     base_config['update_function'] = module.plugin.update_function
                 else:
                     logger.warning(f"{plugin_name}: update_function not found. Skipping plugin.")
                     continue
-    
-                # Load layout (if specified) from the plugin module
+        
+                # 4. Load layout (if specified)
                 if 'layout' in base_config:
                     layout_name = base_config['layout']
                     if hasattr(module.layout, layout_name):
@@ -291,37 +318,33 @@ class PluginManager:
                 else:
                     logger.warning(f"{plugin_name} is missing a configured layout. Skipping plugin.")
                     continue
-    
-                # Instantiate BasePlugin with **base_config and pass plugin_params to config
+        
+                # 5. Instantiate BasePlugin and pass configurations
                 plugin_instance = BasePlugin(
                     **base_config,
                     config=plugin_params,  # Pass plugin_params as config
                 )
-    
                 plugin_instance.update_function = base_config['update_function']
-    
-                # Sort into active or dormant
+        
+                # 6. Sort into active or dormant lists
                 if base_config.get('dormant', False):
                     self.dormant_plugins.append(plugin_instance)
                     logger.info(f"Loaded dormant plugin: {plugin_name}")
                 else:
                     self.active_plugins.append(plugin_instance)
                     logger.info(f"Loaded active plugin: {plugin_name}")
-    
+            except ValueError as e:
+                logger.warning(f"{plugin_name}: Plugin-specific schema validation failed: {e}")
             except ModuleNotFoundError as e:
-                logger.warning(f"Error: {e} while loading {plugin_name}. Skipping plugin.")
-                continue
-            except AttributeError as e:
-                logger.warning(f"{e}. Skipping plugin: {plugin_name}")
-                continue
-            except KeyError:
-                logger.info(f"{plugin_name}: No module specified, skipping.")
+                logger.warning(f"{plugin_name} failed to load due to error: {e}. Skipping plugin.")
                 continue
             except Exception as e:
-                logger.error(f"{plugin_name} failed to load due to error: {e}. Skipping plugin.")
+                logger.error(f"Unexpected error loading {plugin_name}: {e}")
                 continue
-    
+        
         logger.info(f"Loaded {len(self.active_plugins)} active plugins and {len(self.dormant_plugins)} dormant plugins.")
+
+
 # -
 
 
@@ -385,8 +408,16 @@ m.configured_plugins = configured_plugins
 m.configured_plugins
 
 m.load_plugins()
+# -
+
+m.active_plugins
+
+m.active_plugins[2].config
 
 # +
 m.active_plugins[2].update()
 
 m.active_plugins[2].image
+# -
+
+
