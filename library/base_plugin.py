@@ -24,6 +24,7 @@ import logging
 import time
 import signal
 import hashlib
+import uuid
 import sys
 import yaml
 
@@ -84,6 +85,7 @@ class BasePlugin():
     def __init__(
         self,
         name: str = 'Unset',
+        uuid: str = None,
         duration: int = 90,
         config: dict = {},
         resolution: tuple =(800, 480),
@@ -101,10 +103,12 @@ class BasePlugin():
         
     ):
         # Create a logger for this class/module
-       
-        logger.debug("BasePlugin instance created.")        
-        self.update_function = self.default_update_function
         self.name = name
+        self.uuid = uuid or 'self_set-' + str(uuid.uuid4())[:8]
+        logger.debug("BasePlugin instance created.")
+        logger.debug(f"Name: {self.name}, uuid: {self.uuid}")
+        self.update_function = self.default_update_function
+        
         self.duration = duration
         self.refresh_interval = refresh_interval
         self.plugin_timeout = plugin_timeout
@@ -471,8 +475,6 @@ class BasePlugin():
     def timeout_handler(self, signum, frame):
         """Raise a timeout error when the plugin update hangs."""
         raise PluginTimeoutError("Plugin update timed out.", plugin_name=self.name)
-
-
 
 # +
 # import random
