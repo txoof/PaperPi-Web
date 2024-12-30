@@ -24,7 +24,7 @@ import logging
 import time
 import signal
 import hashlib
-import uuid
+from uuid import uuid4
 import sys
 import yaml
 
@@ -104,7 +104,7 @@ class BasePlugin():
     ):
         # Create a logger for this class/module
         self.name = name
-        self.uuid = uuid or 'self_set-' + str(uuid.uuid4())[:8]
+        self.uuid = uuid or 'self_set-' + str(uuid4())[:8]
         logger.debug("BasePlugin instance created.")
         logger.debug(f"Name: {self.name}, uuid: {self.uuid}")
         self.update_function = self.default_update_function
@@ -132,6 +132,7 @@ class BasePlugin():
         # Cache expiration (handled after session initialization)
         self.cache_expire = cache_expire  
 
+        self.high_priority = False
         # # load the update_function
         # if self.plugin_path:
         #     self.load_update_function()
@@ -412,6 +413,17 @@ class BasePlugin():
         logger.info(f"{self.name} - Cache expiration set to {self.cache_expire} days.")
 
     @property
+    def cache_root(self):
+        return self._cache_root
+
+    @cache_root.setter
+    def cache_root(self, value):
+        if not isinstance(value, (Path, str)):
+            raise TypeError(f"Invalid cache_root value: '{value}' must be a string or Path.")
+        self._cache_root = Path(value)
+        self._cache_root.mkdir(parents=True, exist_ok=True)
+        
+    @property
     def cache_dir(self):
         return self._cache_dir
 
@@ -420,7 +432,7 @@ class BasePlugin():
         if not value:
             value = self.cache_root / self.name
         if not isinstance(value, (Path, str)):
-            raise PluginError(f"Invalid cache_dir value: '{value}' must be a string or Path.", plugin_name=self.name)
+            raise TypeError(f"Invalid cache_dir value: '{value}' must be a string or Path.")
         logger.info(f"{self.name} - Using cache directory: {value}")
         self._cache_dir = self.cache_root / value
         self._cache_dir.mkdir(parents=True, exist_ok=True)
