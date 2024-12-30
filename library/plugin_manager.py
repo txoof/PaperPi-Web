@@ -40,7 +40,10 @@ import sys
 
 # Configure logging to show in Jupyter Notebook
 def setup_notebook_logging(level=logging.DEBUG):
-    log_format = '%(asctime)s [%(levelname)s] [%(name)s] - %(message)s'
+    log_format = (
+        '%(asctime)s [%(levelname)s] [%(name)s] '
+        '[%(module)s.%(funcName)s] - %(message)s'
+    )
     
     # Clear any existing handlers to prevent duplicate logging
     for handler in logging.root.handlers[:]:
@@ -75,6 +78,7 @@ class PluginManager:
         config_path: Path = None,
         main_schema_file: str = None,
         plugin_schema_file: str = None,
+        max_plugin_failures: int = 5,
     ):
         self._config = {}
         self._configured_plugins = []        
@@ -84,6 +88,8 @@ class PluginManager:
         self.plugin_schema_file = plugin_schema_file
         self._main_schema = None
         self._plugin_schema = None
+        self.max_plugin_failures = max_plugin_failures
+        self.plugin_failures = {}
 
         # Initialize config if provided
         if config:
@@ -343,6 +349,68 @@ class PluginManager:
                 continue
         
         logger.info(f"Loaded {len(self.active_plugins)} active plugins and {len(self.dormant_plugins)} dormant plugins.")
+        
+    def update_plugins(self):
+        """
+        Update all active plugins and check dormant plugins for activation.
+        Dormant plugins that activate become high-priority and interrupt the display cycle.
+        """
+        # Process both active and dormant plugins together
+        all_plugins = self.active_plugins + self.dormant_plugins
+    
+        for plugin in list(all_plugins):
+            # Skip if plugin is still in cool-down (refresh interval not passed)
+            if not plugin.ready_for_update:
+                logger.debug(f"Plugin")
+                continue
+            
+            logger.info(f"Updating plugin: {plugin.name}")
+            try:
+                success = plugin.update()
+                
+                # Reset failure count on success
+                if success:
+                    self.plugin_failures[plugin.uuid] = 0
+                    
+                    # Handle dormant plugin activation
+                    if plugin.high_priority and plugin in self.dormant_plugins:
+                        logger.info(f"{plugin.name} activated as high-priority.")
+                        # consider another way to do this; create a property called active plugin
+                        self.active_plugins.insert(0, plugin)
+                        self.dormant_plugins.remove(plugin)
+                        
+                        # Interrupt to prioritize this plugin
+                        break
+                else:
+                    self._handle_plugin_failure(plugin)
+            
+            except Exception as e:
+                logger.error(f"Error updating {plugin.name}: {e}")
+                self._handle_plugin_failure(plugin)
+
+    def _handle_plugin_failure(self, plugin):
+        uuid = plugin.config['uuid']
+        self.plugin_failures[uuid] = self.plugin_failures.get(uuid, 0) + 1
+        
+        if self.plugin_failures[uuid] >= self.max_plugin_failures:
+            logger.warning(f"{plugin.name} removed after {self.max_plugin_failures} consecutive failures.")
+            self.active_plugins.remove(plugin)
+        else:
+            logger.warning(f"{plugin.name} failed ({self.plugin_failures[uuid]}/{self.max_plugin_failures}).")
+
+    def remove_plugin_by_uuid(self, plugin_uuid):
+        """
+        Remove a plugin from active or dormant lists based on UUID.
+        """
+        for plugin_list in [self.active_plugins, self.dormant_plugins]:
+            for plugin in plugin_list:
+                if plugin.uuid == plugin_uuid:
+                    plugin_list.remove(plugin)
+                    logger.info(f"Removed plugin {plugin.name} (UUID: {plugin_uuid})")
+                    return True
+        
+        logger.warning(f"Plugin with UUID {plugin_uuid} not found.")
+        return False
 
 
 # -
@@ -368,7 +436,7 @@ configured_plugins = [
          'base_config': {
             'name': 'Basic Clock',
             'duration': 100,
-            'refresh_interval': 60,
+            # 'refresh_interval': 60,
             'dormant': False,
             'layout': 'layout',
          }
@@ -410,14 +478,20 @@ m.configured_plugins
 m.load_plugins()
 # -
 
-m.active_plugins
+m.update_plugins()
 
-m.active_plugins[2].config
+from IPython.display import display
+m.update_plugins()
+for i in m.active_plugins:
+    display(i.image)
 
 # +
-m.active_plugins[2].update()
 
-m.active_plugins[2].image
+m.active_plugins[0].uuid
 # -
 
+m.active_plugins[2].name
+dir(m.active_plugins[2])
+
+#
 
