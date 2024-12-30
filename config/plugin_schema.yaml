@@ -4,6 +4,14 @@ plugin_config:
         type: str
         default: null
         description: 'Human readable plugin identifier'
+    duration:
+        type: int
+        default: 120
+        description: 'Amount of time in seconds to display plugin'
+    refresh_interval:
+        type: int
+        default: 60
+        description: 'Amount of time in seconds between refreshing the data for this plugin'
     layout:
         type: str
         default: layout
