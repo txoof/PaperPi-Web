@@ -113,10 +113,7 @@ def update_function(self, time=None, *args, **kwargs):
     
     
     data = {'wordtime': f'{choice(stems)} {time_str}',
-              'time': now}
-
-    print(data)
-    
+              'time': now}    
 
     # if 'text_color' in self.config or 'bkground_color' in self.config:
     #     logger.info('using user-defined colors')
