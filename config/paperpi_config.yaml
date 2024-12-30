@@ -22,3 +22,5 @@ main:
     no_wipe: false
     # Plugin timeout in seconds
     plugin_timeout: 30
+    # maximum consecutive number of times a plugin may fail before being removed from the display loop
+    max_plugin_failures: 5

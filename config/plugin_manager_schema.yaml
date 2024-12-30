@@ -18,3 +18,7 @@ cache_root:
     type: str
     default: '/tmp/PaperPi_cache/'
     description: 'Root of cache directory'
+max_plugin_failures:
+    type: int
+    default: 5
+    description: 'Maximim consecutive times a plugin can fail before being removed from the display loop'
