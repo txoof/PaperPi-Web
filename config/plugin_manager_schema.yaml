@@ -1,4 +1,4 @@
-# main configuration for plugin manager and all plugins
+# schema for validating main configuration for plugin manager and all plugins
 screen_mode:
     type: str
     default: '1'

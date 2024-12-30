@@ -1,3 +1,4 @@
+# schema file for validating PaperPi configuration
 main:
     display_type:
         type: str

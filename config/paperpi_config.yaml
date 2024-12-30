@@ -1,3 +1,4 @@
+# absolute basic configuration file for PaperPi
 CONFIG_VERSION: 2
 
 main:

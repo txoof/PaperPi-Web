@@ -1,3 +1,4 @@
+# schema for validating plugin configuration as they are loaded
 plugin_config:
     name:
         type: str
