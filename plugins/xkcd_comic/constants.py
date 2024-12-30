@@ -8,12 +8,12 @@ name = 'xkcd_comic'
 
 default_comic = '1495'
 
-required_config = {
-    'max_x': 800,
-    'max_y': 600,
-    'max_retries': 10,
-    'resize': 0,
-}
+# required_config = {
+#     'max_x': 800,
+#     'max_y': 600,
+#     'max_retries': 10,
+#     'resize': 0,
+# }
 
 # sample_config = '''
 # [Plugin: XKCD Comic Plugin]
