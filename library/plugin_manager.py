@@ -355,7 +355,7 @@ m = PluginManager()
 
 m.plugin_path = './plugins/'
 m.config_path = '../config/'
-m.main_schema_file = 'main_schema.yaml'
+m.main_schema_file = 'plugin_manager_schema.yaml'
 m.plugin_schema_file = 'plugin_schema.yaml'
 
 config = {
