@@ -34,15 +34,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# +
-import logging
-import sys
 
-# Configure logging to show in Jupyter Notebook
+# +
+# Configure logging to show in Jupyter Notebook with detailed output
 def setup_notebook_logging(level=logging.DEBUG):
     log_format = (
         '%(asctime)s [%(levelname)s] [%(name)s] '
-        '[%(module)s.%(funcName)s] - %(message)s'
+        '[%(module)s.%(funcName)s] [%(lineno)d] - %(message)s'
     )
     
     # Clear any existing handlers to prevent duplicate logging
@@ -56,7 +54,7 @@ def setup_notebook_logging(level=logging.DEBUG):
         handlers=[logging.StreamHandler(sys.stdout)]
     )
     
-    logging.getLogger(__name__).info("Notebook logging configured.")
+    logging.getLogger(__name__).debug("Notebook logging configured.")
 
 # Run this cell to enable logging
 setup_notebook_logging()
@@ -90,6 +88,7 @@ class PluginManager:
         self._plugin_schema = None
         self.max_plugin_failures = max_plugin_failures
         self.plugin_failures = {}
+        self.foreground_plugin = None
 
         # Initialize config if provided
         if config:
@@ -328,6 +327,9 @@ class PluginManager:
                 # 5. Instantiate BasePlugin and pass configurations
                 plugin_instance = BasePlugin(
                     **base_config,
+                    cache_root=config['cache_root'],
+                    cache_expire=config['cache_expire'],
+                    resolution=config['resolution'],
                     config=plugin_params,  # Pass plugin_params as config
                 )
                 plugin_instance.update_function = base_config['update_function']
@@ -353,43 +355,72 @@ class PluginManager:
     def update_plugins(self):
         """
         Update all active plugins and check dormant plugins for activation.
-        Dormant plugins that activate become high-priority and interrupt the display cycle.
+        The foreground_plugin displays until its timer expires or a dormant plugin 
+        activates as high-priority and interrupts the display.
         """
-        # Process both active and dormant plugins together
-        all_plugins = self.active_plugins + self.dormant_plugins
-    
-        for plugin in list(all_plugins):
-            # Skip if plugin is still in cool-down (refresh interval not passed)
-            if not plugin.ready_for_update:
-                logger.debug(f"Plugin")
-                continue
-            
-            logger.info(f"Updating plugin: {plugin.name}")
+        if not self.foreground_plugin:
+            self.foreground_plugin = self.active_plugins[0]
+        # Update the foreground plugin if it's time
+        if self.foreground_plugin and self.foreground_plugin.ready_for_update:
+            logger.info(f"Updating foreground plugin: {self.foreground_plugin.name}")
             try:
-                success = plugin.update()
-                
-                # Reset failure count on success
-                if success:
-                    self.plugin_failures[plugin.uuid] = 0
-                    
-                    # Handle dormant plugin activation
-                    if plugin.high_priority and plugin in self.dormant_plugins:
-                        logger.info(f"{plugin.name} activated as high-priority.")
-                        # consider another way to do this; create a property called active plugin
-                        self.active_plugins.insert(0, plugin)
-                        self.dormant_plugins.remove(plugin)
-                        
-                        # Interrupt to prioritize this plugin
-                        break
-                else:
-                    self._handle_plugin_failure(plugin)
-            
+                success = self.foreground_plugin.update()
+                if not success:
+                    self._handle_plugin_failure(self.foreground_plugin)
             except Exception as e:
-                logger.error(f"Error updating {plugin.name}: {e}")
-                self._handle_plugin_failure(plugin)
+                logger.error(f"Error updating {self.foreground_plugin.name}: {e}")
+                self._handle_plugin_failure(self.foreground_plugin)
+    
+        # Always check dormant plugins for activation
+        for plugin in self.dormant_plugins:
+            if plugin.ready_for_update:
+                logger.info(f"Checking dormant plugin: {plugin.name}")
+                try:
+                    success = plugin.update()
+                    if success and plugin.high_priority:
+                        logger.info(f"{plugin.name} activated as high-priority.")
+                        self.foreground_plugin = plugin
+                        break
+                except Exception as e:
+                    logger.error(f"Error updating dormant plugin {plugin.name}: {e}")
+                    self._handle_plugin_failure(plugin)
+    
+        # Cycle to the next plugin if the foreground_plugin timer has expired
+        if self.foreground_plugin and self.foreground_plugin.time_to_refresh <= 0:
+            logger.info(f"{self.foreground_plugin.name} cycle complete. Moving to next plugin.")
+            self._cycle_to_next_plugin()
+    
+    def _cycle_to_next_plugin(self):
+        """Cycle to the next active plugin by UUID."""
+        if not self.active_plugins:
+            logger.warning("No active plugins to cycle.")
+            self.foreground_plugin = None
+            return
+        
+        if not self.foreground_plugin:
+            # Start with the first active plugin if none is set
+            self.foreground_plugin = self.active_plugins[0]
+            logger.info(f"Foreground plugin set to: {self.foreground_plugin.name}")
+            return
+        
+        # Locate current foreground plugin by UUID
+        current_uuid = self.foreground_plugin.uuid
+        current_index = next(
+            (i for i, plugin in enumerate(self.active_plugins) if plugin.uuid == current_uuid),
+            -1
+        )
+        
+        if current_index == -1:
+            logger.warning("Foreground plugin not found in active list. Resetting to first plugin.")
+            self.foreground_plugin = self.active_plugins[0]
+        else:
+            # Cycle to the next plugin (loop back if at the end)
+            next_index = (current_index + 1) % len(self.active_plugins)
+            self.foreground_plugin = self.active_plugins[next_index]
+            logger.info(f"Cycled to next plugin: {self.foreground_plugin.name}")
 
     def _handle_plugin_failure(self, plugin):
-        uuid = plugin.config['uuid']
+        uuid = plugin.uuid
         self.plugin_failures[uuid] = self.plugin_failures.get(uuid, 0) + 1
         
         if self.plugin_failures[uuid] >= self.max_plugin_failures:
@@ -437,58 +468,109 @@ configured_plugins = [
             'name': 'Basic Clock',
             'duration': 100,
             # 'refresh_interval': 60,
-            'dormant': False,
+            # 'dormant': False,
             'layout': 'layout',
          }
     },
-    {'plugin': 'word_clock',
-        'base_config':{
-            'name': 'Word Clock',
-            'duration': 130,
-            'refresh_interval': 60,
+    {'plugin': 'debugging',
+        'base_config': {
+            'name': 'Debugging 50',
+            'dormant': True,
             'layout': 'layout',
+            'refresh_interval': 2,
         },
         'plugin_params': {
-            'foo': 'bar',
-            'spam': 7,
-            'username': 'Monty'}
-    },
-    {'plugin': 'xkcd_comic',
-        'base_config': {
-            'name': 'XKCD',
-            'duration': 200,
-            'refresh_interval': 1800,
-            'dormant': False,
-            'layout': 'layout'
-        },
-        'plugin_params':{
-            'max_x': 800,
-            'max_y': 600,
-            'resize': False,
-            'max_retries': 5
+            'title': 'Debugging 50',
+            'crash_rate': 0.5,
+            'high_priority_rate': 0.3,
+            
         }
-             
     }
+    # {'plugin': 'word_clock',
+    #     'base_config':{
+    #         'name': 'Word Clock',
+    #         'duration': 130,
+    #         'refresh_interval': 60,
+    #         'layout': 'layout',
+    #     },
+    #     'plugin_params': {
+    #         'foo': 'bar',
+    #         'spam': 7,
+    #         'username': 'Monty'}
+    # },
+    # {'plugin': 'xkcd_comic',
+    #     'base_config': {
+    #         'name': 'XKCD',
+    #         'duration': 200,
+    #         'refresh_interval': 1800,
+    #         'dormant': False,
+    #         'layout': 'layout'
+    #     },
+    #     'plugin_params':{
+    #         'max_x': 800,
+    #         'max_y': 600,
+    #         'resize': False,
+    #         'max_retries': 5
+    #     }
+             
+    # }
 ]
 m.config = config
 m.configured_plugins = configured_plugins
-
-m.configured_plugins
-
 m.load_plugins()
-# -
-
-m.update_plugins()
-
-from IPython.display import display
-m.update_plugins()
-for i in m.active_plugins:
-    display(i.image)
 
 # +
+import time
 
-m.active_plugins[0].uuid
+# Toy loop to simulate plugin updates
+logger.info("Starting toy loop to simulate plugin updates...")
+
+loop_count = 0
+max_loops = 20  # Stop after 20 loops for testing
+
+while loop_count < max_loops:
+    logger.info(f"\n--- Loop {loop_count + 1} ---")
+    
+    m.update_plugins()
+
+    # Show currently active plugin and its data
+    if m.foreground_plugin:
+        plugin_name = m.foreground_plugin.name
+        plugin_data = m.foreground_plugin.data
+        logger.info(f"Foreground Plugin: {plugin_name}")
+        logger.info(f"Plugin Data: {plugin_data}")
+    else:
+        logger.info("No active plugin at this time.")
+
+    # Simulate a short delay to mimic update intervals
+    time.sleep(1)
+    
+    loop_count += 1
+
+logger.info("Toy loop completed.")
 # -
+
+m.active_plugins
+
+from IPython.display import display
+
+# +
+m.update_plugins()
+
+for i in m.dormant_plugins:
+    if i.high_priority:
+        display(i.image)
+# -
+
+m.dormant_plugins
+
+i.high_priority
+
+i.refresh_interval
+
+i.image
+
+i.update()
 
 m.active_plugins[2].name
 dir(m.active_plugins[2])
