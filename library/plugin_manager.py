@@ -611,6 +611,7 @@ class PluginManager:
             bool: True if the plugin was added successfully, False if the plugin failed to load or validate.
         """
         required_keys = ['plugin', 'base_config']
+        add_config = True
         for key in required_keys:
             if key not in plugin_config:
                 logger.error(f"Plugin configuration missing required key: {key}")
@@ -623,18 +624,7 @@ class PluginManager:
         configured_plugin_uuids = [p['base_config'].get('uuid') for p in self.configured_plugins]
         if base_config.get('uuid') in configured_plugin_uuids:
             add_config = False
-        else:
-            add_config = True
-        # # Check if plugin with the same UUID already exists
-        # existing_plugin = next(
-        #     (p for p in self._configured_plugins if p['base_config'].get('uuid') == base_config.get('uuid')),
-        #     None
-        # )
-    
-        # # Skip adding if plugin already exists
-        # if existing_plugin:
-        #     logger.warning(f"Plugin {plugin_name} (UUID: {base_config['uuid']}) already exists. Skipping addition.")
-        #     return False
+
     
         # Default to load_failed until plugin is successfully loaded
         plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': 'Pending validation'}
@@ -727,8 +717,14 @@ class PluginManager:
             msg = f"Unexpected error adding {plugin_name}: {e}"
             logger.error(msg)
             plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
-    
+
+        finally:
+            # Always track plugin configuration regardless of success/failure
+            if plugin_config not in self._configured_plugins:
+                self._configured_plugins.append(plugin_config)
+        
         return False
+        
     # ----- Plugin Cycling and Management
     def update_plugins(self):
         """
@@ -800,7 +796,6 @@ class PluginManager:
             self.remove_plugin_by_uuid(uuid)
         else:
             logger.warning(f"{plugin.name} failed ({self.plugin_failures[uuid]}/{self.max_plugin_failures}).")
-
 
 # ! ln -s ../plugins ./
 
@@ -880,48 +875,19 @@ m.configured_plugins = configured_plugins
 m.configured_plugins
 m.load_plugins()
 
-m.active_plugins
-
-# +
-all_plugins = m.active_plugins + m.dormant_plugins
-
-loaded_uuids = [p.uuid for p in m.active_plugins + m.dormant_plugins]
-    
-for plugin in m.configured_plugins:
-    plugin_uuid = plugin['base_config'].get('uuid')
-    if plugin_uuid in loaded_uuids:
-        logger.info(f"Plugin {plugin['plugin']} (UUID: {plugin_uuid}) is already loaded. Skipping load.")
-# -
-
-[p['base_config'].get('uuid') for p in m.configured_plugins]
-
-m.configured_plugins[0]['base_config'].get('uuid')
-
-[p.uuid for p in m.active_plugins + m.dormant_plugins]
-
-m.configured_plugins
-
-m.load_plugins()
-
-m.active_plugins
-
-
-
-c =   {'plugin': 'word_clock',
-        'base_config':{
-            'name': 'Word Clock',
-            'duration': 130,
-            'refresh_interval': 60,
-            'layout': 'layout',
+c = {'plugin': 'xkcd_comicx',
+        'base_config': {
+            'name': 'XKCD',
+            'duration': 200,
+            'refresh_interval': 1800,
+            'dormant': False,
+            'layout': 'layout'
         },
-        'plugin_params': {
-            'foo': 'bar',
-            'spam': 7,
-            'username': 'Monty'}
     }
 m.add_plugin(c)
+m.configured_plugins
 
-c
+m.configured_plugins
 
 m.configured_plugins
 
