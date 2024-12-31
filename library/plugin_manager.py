@@ -622,7 +622,9 @@ class PluginManager:
         plugin_params = plugin_config.get('plugin_params', {})
         configured_plugin_uuids = [p['base_config'].get('uuid') for p in self.configured_plugins]
         if base_config.get('uuid') in configured_plugin_uuids:
-            add =
+            add_config = False
+        else:
+            add_config = True
         # # Check if plugin with the same UUID already exists
         # existing_plugin = next(
         #     (p for p in self._configured_plugins if p['base_config'].get('uuid') == base_config.get('uuid')),
@@ -708,7 +710,8 @@ class PluginManager:
                 logger.info(f"Added active plugin: {plugin_name}")
     
             # Add to configured plugins list only if new
-            self._configured_plugins.append(plugin_config)
+            if add_config:
+                self._configured_plugins.append(plugin_config)
     
             return True
     
@@ -876,6 +879,8 @@ m.config = config
 m.configured_plugins = configured_plugins
 m.configured_plugins
 m.load_plugins()
+
+m.active_plugins
 
 # +
 all_plugins = m.active_plugins + m.dormant_plugins
