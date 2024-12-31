@@ -406,7 +406,8 @@ class PluginManager:
                     'int': int,
                     'float': float,
                     'bool': bool,
-                    'None': type(None)
+                    'None': type(None),
+                    'dict': dict
                 }
                 expected_type = tuple(
                     type_mappings[t.strip()] for t in expected_type[1:-1].split(',')
@@ -535,76 +536,131 @@ class PluginManager:
         
     def list_plugins(self):
         """
-        List all active and dormant plugins with their name and UUID.
+        List all configured plugins with their name, UUID, and status.
         
         Returns:
-            dict: Dictionary containing lists of active and dormant plugins.
+            dict: Dictionary containing lists of plugins categorized by status.
         """
-        logger.info("\n--- Active Plugins ---")
-        active_list = []
-        for plugin in self.active_plugins:
-            logger.info(f"Name: {plugin.name}, UUID: {plugin.uuid}")
-            active_list.append({'name': plugin.name, 'uuid': plugin.uuid})
+        logger.info("\n--- Configured Plugins ---")
+        plugin_summary = {
+            'active': [],
+            'dormant': [],
+            'load_failed': [],
+            'unknown': []
+        }
     
-        logger.info("\n--- Dormant Plugins ---")
-        dormant_list = []
-        for plugin in self.dormant_plugins:
-            logger.info(f"Name: {plugin.name}, UUID: {plugin.uuid}")
-            dormant_list.append({'name': plugin.name, 'uuid': plugin.uuid})
+        for plugin_config in self.configured_plugins:
+            plugin_name = plugin_config['base_config'].get('name', 'Unnamed Plugin')
+            uuid = plugin_config['base_config'].get('uuid', 'No UUID')
+            status_info = plugin_config.get('plugin_status', {})
+            status = status_info.get('status', 'unknown')
+            reason = status_info.get('reason', 'No reason provided')
     
-        return {
-            'active': active_list,
-            'dormant': dormant_list
-        }    
+            logger.info(f"Name: {plugin_name}, UUID: {uuid}, Status: {status}, Reason: {reason}")
+            
+            # Categorize the plugin based on its status
+            if status in plugin_summary:
+                plugin_summary[status].append({
+                    'name': plugin_name,
+                    'uuid': uuid,
+                    'status': status,
+                    'reason': reason
+                })
+            else:
+                plugin_summary['unknown'].append({
+                    'name': plugin_name,
+                    'uuid': uuid,
+                    'status': 'unknown',
+                    'reason': reason
+                })
+    
+        return plugin_summary
+
     
     def remove_plugin(self, plugin_uuid):
         """
-        Public method to remove a plugin by UUID.
+        Public method to fully remove a plugin by UUID.
+        
+        This method removes the plugin from active and dormant lists,
+        and also deletes its configuration from the configured_plugins list.
+        
+        Args:
+            plugin_uuid (str): UUID of the plugin to remove.
+    
+        Returns:
+            bool: True if the plugin was successfully removed, False if the plugin was not found.
         """
-        return self._remove_plugin_by_uuid(plugin_uuid)
-        
-        def _cycle_to_next_plugin(self):
-            """Cycle to the next active plugin by UUID."""
-            if not self.active_plugins:
-                logger.warning("No active plugins to cycle.")
-                self.foreground_plugin = None
-                return
-        
-        if not self.foreground_plugin:
-            # Start with the first active plugin if none is set
-            self.foreground_plugin = self.active_plugins[0]
-            logger.info(f"Foreground plugin set to: {self.foreground_plugin.name}")
-            return
-        
-        # Locate current foreground plugin by UUID
-        current_uuid = self.foreground_plugin.uuid
-        current_index = next(
-            (i for i, plugin in enumerate(self.active_plugins) if plugin.uuid == current_uuid),
-            -1
-        )
-        
-        if current_index == -1:
-            logger.warning("Foreground plugin not found in active list. Resetting to first plugin.")
-            self.foreground_plugin = self.active_plugins[0]
-        else:
-            # Cycle to the next plugin (loop back if at the end)
-            next_index = (current_index + 1) % len(self.active_plugins)
-            self.foreground_plugin = self.active_plugins[next_index]
-            logger.info(f"Cycled to next plugin: {self.foreground_plugin.name}")
+    
+        active_success = self._remove_plugin_by_uuid(plugin_uuid)
+        success = False
+        configured_uuids = [p['base_config'].get('uuid') for p in self.configured_plugins]
 
-    def remove_plugin_by_uuid(self, plugin_uuid):
+        if plugin_uuid in configured_uuids:
+            self._configured_plugins = [
+                p for p in self.configured_plugins if p['base_config'].get('uuid') != plugin_uuid
+            ]
+            logger.info(f"Removed plugin configuration with UUID: {plugin_uuid}")
+            success = True
+
+        if active_success:
+            logger.info(f"Removed active/dormant plugin with UUID: {plugin_uuid}")
+            success = True
+        else:
+            logger.info(f"Plugin UUID: {plugin_uuid} was not active or dormant.")    
+    
+    def _remove_plugin_by_uuid(self, plugin_uuid):
         """
-        Remove a plugin from active or dormant lists based on UUID.
+        Private method to remove a plugin from active or dormant lists by UUID.
+        
+        Args:
+            plugin_uuid (str): UUID of the plugin to remove.
+    
+        Returns:
+            bool: True if the plugin was removed, False if the plugin was not found.
         """
         for plugin_list in [self.active_plugins, self.dormant_plugins]:
             for plugin in plugin_list:
                 if plugin.uuid == plugin_uuid:
                     plugin_list.remove(plugin)
                     logger.info(f"Removed plugin {plugin.name} (UUID: {plugin_uuid})")
+    
+                    # Handle foreground plugin cycling if the removed plugin was active
+                    if plugin == self.foreground_plugin:
+                        logger.info(f"{plugin.name} was the foreground plugin. Cycling to the next.")
+                        self._cycle_to_next_plugin()
+    
                     return True
         
-        logger.warning(f"Plugin with UUID {plugin_uuid} not found.")
+        logger.warning(f"Plugin with UUID {plugin_uuid} not found in active/dormant lists.")
         return False
+    
+    
+    def _cycle_to_next_plugin(self):
+        """
+        Cycle to the next active plugin by UUID.
+        
+        If no active plugins are available, the foreground plugin is set to None.
+        """
+        if not self.active_plugins:
+            logger.warning("No active plugins to cycle.")
+            self.foreground_plugin = None
+            return
+        
+        # Cycle to the next active plugin
+        if self.foreground_plugin:
+            current_uuid = self.foreground_plugin.uuid
+            current_index = next(
+                (i for i, plugin in enumerate(self.active_plugins) if plugin.uuid == current_uuid),
+                -1
+            )
+    
+            next_index = (current_index + 1) % len(self.active_plugins) if current_index != -1 else 0
+            self.foreground_plugin = self.active_plugins[next_index]
+            logger.info(f"Cycled to next plugin: {self.foreground_plugin.name}")
+        else:
+            # Default to the first active plugin if no foreground exists
+            self.foreground_plugin = self.active_plugins[0]
+            logger.info(f"Foreground plugin set to: {self.foreground_plugin.name}")
 
     def add_plugin(self, plugin_config: dict):
         """
@@ -698,11 +754,11 @@ class PluginManager:
             # Determine plugin status and list
             if base_config.get('dormant', False):
                 self.dormant_plugins.append(plugin_instance)
-                plugin_config['plugin_status'] = {'status': 'dormant', 'reason': 'Loaded successfully'}
+                plugin_config['plugin_status'] = {'status': self.DORMANT, 'reason': 'Loaded successfully'}
                 logger.info(f"Added dormant plugin: {plugin_name}")
             else:
                 self.active_plugins.append(plugin_instance)
-                plugin_config['plugin_status'] = {'status': 'active', 'reason': 'Loaded successfully'}
+                plugin_config['plugin_status'] = {'status': self.ACTIVE, 'reason': 'Loaded successfully'}
                 logger.info(f"Added active plugin: {plugin_name}")
     
             # Add to configured plugins list only if new
@@ -799,7 +855,7 @@ class PluginManager:
         
         if self.plugin_failures[uuid] >= self.max_plugin_failures:
             logger.warning(f"{plugin.name} removed after {self.max_plugin_failures} consecutive failures.")
-            self.remove_plugin_by_uuid(uuid)
+            self._remove_plugin_by_uuid(uuid)
         else:
             logger.warning(f"{plugin.name} failed ({self.plugin_failures[uuid]}/{self.max_plugin_failures}).")
 
@@ -881,6 +937,8 @@ m.configured_plugins = configured_plugins
 m.configured_plugins
 m.load_plugins()
 
+m.list_plugins()
+
 c = {'plugin': 'xkcd_comicx',
         'base_config': {
             'name': 'XKCD',
@@ -891,11 +949,11 @@ c = {'plugin': 'xkcd_comicx',
         },
     }
 m.add_plugin(c)
-m.configured_plugins
+m.list_plugins()
 
-m.configured_plugins
+m.remove_plugin('693945d4')
 
-m.configured_plugins
+m.list_plugins()
 
 # +
 import time
