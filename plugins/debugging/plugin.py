@@ -66,6 +66,9 @@ def update_function(self, title=None, crash_rate=None, max_priority_rate=None, *
 
     crash = False
     success = False
+    title = self.config.get('title', None)
+    max_priority_rate = self.config.get('max_priority_rate', None)
+    crash_rate = self.config.get('crash_rate', None)
     
     if not title:
         constants.default_title
@@ -77,12 +80,13 @@ def update_function(self, title=None, crash_rate=None, max_priority_rate=None, *
         max_priority_rate = constants.default_max_priority_rate
     
     random.seed(time())
-    rand_val = random.random()
+    rand_crash = random.random()
     rand_priority = random.random()
 
 
     logger.info(f'rand_priority: {rand_priority}, max_priority_rate: {max_priority_rate}')
-    if rand_priority >= max_priority_rate:
+    
+    if rand_priority <= max_priority_rate:
         high_priority = True
     else:
         high_priority = False
@@ -96,15 +100,12 @@ def update_function(self, title=None, crash_rate=None, max_priority_rate=None, *
         'priority': f'high_priority: {high_priority}',
     }
 
-    if rand_val <= crash_rate:
-        logger.info('random crash occurred: will throw exception')
+    if rand_crash <= crash_rate:
+        logger.info('Random CRASH!')
         crash = True
-    else:
-        logger.info('random crash did not occur: will not throw exception')
-        crash = False
-
+    
     if crash:
-        raise Exception(f'random crash occured: random value {rand_val:.2f} <= {crash_rate:.2f}')
+        raise Exception(f'random crash occured')
     else:
         success = True
         
