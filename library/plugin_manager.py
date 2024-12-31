@@ -34,8 +34,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-
 # +
+import sys
 # Configure logging to show in Jupyter Notebook with detailed output
 def setup_notebook_logging(level=logging.DEBUG):
     log_format = (
@@ -63,7 +63,6 @@ setup_notebook_logging()
 setup_notebook_logging(logging.INFO)
 
 
-# +
 class PluginManager:
     """
     Manages the loading, configuration, and lifecycle of plugins.
@@ -105,7 +104,9 @@ class PluginManager:
             max_plugin_failures (int, optional): Number of allowed consecutive failures before a plugin is removed (default: 5).
         """
         self._config = {}
-        self._configured_plugins = []        
+        self._configured_plugins = []
+        self.active_plugins = []
+        self.dormant_plugins = []
         self.plugin_path = plugin_path
         self.config_path = config_path
         self.main_schema_file = main_schema_file
@@ -490,12 +491,34 @@ class PluginManager:
         Locate and load plugins based on the configured_plugins property.
         Only load plugins that pass global and plugin-specific schema validation.
         """
+
+        logger.info("Loading configured plugins...")
+            
         self.active_plugins = []
         self.dormant_plugins = []
-    
+        
         logger.info("Loading all configured plugins...")
-    
+        
+        all_plugins = self.active_plugins + self.dormant_plugins
+        loaded_uuids = [p.uuid for p in self.active_plugins + self.dormant_plugins]    
         for plugin_config in self.configured_plugins:
+            plugin_uuid = plugin['base_config'].get('uuid')
+            if plugin_uuid in loaded_uuids:
+                logger.info(f"Plugin {plugin['plugin']} (UUID: {plugin_uuid}) is already loaded. Skipping load.")
+                continue
+            # plugin_uuid = plugin_config['base_config'].get('uuid')
+    
+            # # Check if the plugin is already loaded
+            # existing_plugin = next(
+            #     (p for p in self.active_plugins + self.dormant_plugins if p.uuid == plugin_uuid),
+            #     None
+            # )
+    
+            # if existing_plugin:
+            #     logger.info(f"Plugin {plugin_config['plugin']} (UUID: {plugin_uuid}) already loaded. Skipping.")
+            #     continue  # Skip the rest of the loading logic for this plugin
+    
+            # Attempt to add the plugin
             success = self.add_plugin(plugin_config)
             if not success:
                 logger.warning(f"Failed to load plugin: {plugin_config['plugin']}")
@@ -587,61 +610,84 @@ class PluginManager:
         Returns:
             bool: True if the plugin was added successfully, False if the plugin failed to load or validate.
         """
-        # Validate the input
         required_keys = ['plugin', 'base_config']
         for key in required_keys:
             if key not in plugin_config:
                 logger.error(f"Plugin configuration missing required key: {key}")
+                plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': f"Missing required key: {key}"}
                 return False
     
         plugin_name = plugin_config['plugin']
         base_config = plugin_config['base_config']
         plugin_params = plugin_config.get('plugin_params', {})
-        logging.info(f"Adding plugin {base_config.get('name', 'Unset')}")
-        logging.info(f"base_config: {base_config}")
+        configured_plugin_uuids = [p['base_config'].get('uuid') for p in self.configured_plugins]
+        if base_config.get('uuid') in configured_plugin_uuids:
+            add =
+        # # Check if plugin with the same UUID already exists
+        # existing_plugin = next(
+        #     (p for p in self._configured_plugins if p['base_config'].get('uuid') == base_config.get('uuid')),
+        #     None
+        # )
+    
+        # # Skip adding if plugin already exists
+        # if existing_plugin:
+        #     logger.warning(f"Plugin {plugin_name} (UUID: {base_config['uuid']}) already exists. Skipping addition.")
+        #     return False
+    
+        # Default to load_failed until plugin is successfully loaded
+        plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': 'Pending validation'}
     
         try:
-            # 1. Validate Against Global Plugin Schema
+            # Validate Against Global Plugin Schema
             global_schema = self.plugin_schema.get('plugin_config', {})
             logger.info(f"Validating {plugin_name} against global schema...")
             self._validate_config(base_config, global_schema)
     
-            # 2. Validate Against Plugin-Specific Schema (if available)
+            # Validate Against Plugin-Specific Schema (if available)
             plugin_specific_schema = self._load_plugin_schema(plugin_name)
             if plugin_specific_schema:
                 logger.info(f"Validating {plugin_name} against plugin-specific schema...")
                 self._validate_config(plugin_params, plugin_specific_schema)
     
-            # 3. Assign UUID and Prepare for Loading
-            plugin_uuid = str(uuid.uuid4())[:8]
-            base_config['uuid'] = plugin_uuid
-            logger.info(f"Assigned UUID {plugin_uuid} to new plugin {plugin_name}.")
+            # Assign UUID if not already assigned
+            if 'uuid' not in base_config:
+                plugin_uuid = str(uuid.uuid4())[:8]
+                base_config['uuid'] = plugin_uuid
+                logger.info(f"Assigned UUID {plugin_uuid} to new plugin {plugin_name}.")
     
             if not base_config.get('name'):
-                base_config['name'] = f"{plugin_name}-{plugin_uuid}"
+                base_config['name'] = f"{plugin_name}-{base_config['uuid']}"
                 logger.info(f"Set default plugin name to {base_config['name']}.")
     
-            # 4. Load the Plugin
+            # Load the Plugin
             module = import_module(f'plugins.{plugin_name}')
     
             if hasattr(module.plugin, 'update_function'):
                 base_config['update_function'] = module.plugin.update_function
             else:
-                logger.warning(f"{plugin_name}: update_function not found. Skipping plugin.")
+                msg = f"{plugin_name}: update_function not found"
+                logger.warning(msg)
+                plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
                 return False
     
+            # Load layout
             if 'layout' in base_config:
                 layout_name = base_config['layout']
                 if hasattr(module.layout, layout_name):
                     layout = getattr(module.layout, layout_name)
                     base_config['layout'] = layout
                 else:
-                    raise AttributeError(f"Layout '{layout_name}' not found in {plugin_name}")
+                    msg = f"Layout '{layout_name}' not found in {plugin_name}"
+                    logger.warning(msg)
+                    plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
+                    return False
             else:
-                logger.warning(f"{plugin_name} is missing a configured layout. Skipping plugin.")
+                msg = f"{plugin_name} is missing a configured layout"
+                logger.warning(msg)
+                plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
                 return False
     
-            # 5. Instantiate and Add to Active/Dormant Lists
+            # Instantiate and Add to Active/Dormant Lists
             plugin_instance = BasePlugin(
                 **base_config,
                 cache_root=self.config['cache_root'],
@@ -651,27 +697,35 @@ class PluginManager:
             )
             plugin_instance.update_function = base_config['update_function']
     
+            # Determine plugin status and list
             if base_config.get('dormant', False):
                 self.dormant_plugins.append(plugin_instance)
+                plugin_config['plugin_status'] = {'status': 'dormant', 'reason': 'Loaded successfully'}
                 logger.info(f"Added dormant plugin: {plugin_name}")
             else:
                 self.active_plugins.append(plugin_instance)
+                plugin_config['plugin_status'] = {'status': 'active', 'reason': 'Loaded successfully'}
                 logger.info(f"Added active plugin: {plugin_name}")
     
-            # Add to configured plugins list
+            # Add to configured plugins list only if new
             self._configured_plugins.append(plugin_config)
     
             return True
     
         except ValueError as e:
-            logger.warning(f"Plugin {plugin_name} failed validation: {e}")
+            msg = f"Plugin {plugin_name} failed validation: {e}"
+            logger.warning(msg)
+            plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
         except ModuleNotFoundError as e:
-            logger.warning(f"Failed to load {plugin_name}: {e}")
+            msg = f"Failed to load {plugin_name}: {e}"
+            logger.warning(msg)
+            plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
         except Exception as e:
-            logger.error(f"Unexpected error adding {plugin_name}: {e}")
+            msg = f"Unexpected error adding {plugin_name}: {e}"
+            logger.error(msg)
+            plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
     
         return False
-
     # ----- Plugin Cycling and Management
     def update_plugins(self):
         """
@@ -745,8 +799,6 @@ class PluginManager:
             logger.warning(f"{plugin.name} failed ({self.plugin_failures[uuid]}/{self.max_plugin_failures}).")
 
 
-# -
-
 # ! ln -s ../plugins ./
 
 # +
@@ -785,19 +837,19 @@ configured_plugins = [
     #         'high_priority_rate': 0.2,
             
     #     }
-    # }
-    # {'plugin': 'word_clock',
-    #     'base_config':{
-    #         'name': 'Word Clock',
-    #         'duration': 130,
-    #         'refresh_interval': 60,
-    #         'layout': 'layout',
-    #     },
-    #     'plugin_params': {
-    #         'foo': 'bar',
-    #         'spam': 7,
-    #         'username': 'Monty'}
     # },
+    {'plugin': 'word_clock',
+        'base_config':{
+            'name': 'Word Clock',
+            'duration': 130,
+            'refresh_interval': 60,
+            'layout': 'layout',
+        },
+        'plugin_params': {
+            'foo': 'bar',
+            'spam': 7,
+            'username': 'Monty'}
+    },
     # {'plugin': 'xkcd_comic',
     #     'base_config': {
     #         'name': 'XKCD',
@@ -816,28 +868,57 @@ configured_plugins = [
     # }
 ]
 m.config = config
-m.configured_plugins = configured_plugins
-m.load_plugins()
+
+# m.configured_plugins = configured_plugins
+# m.load_plugins()
 # -
 
+m.configured_plugins = configured_plugins
+m.configured_plugins
 m.load_plugins()
-m.config
 
-c = {'plugin': 'xkcd_comic',
-        'base_config': {
-            'name': 'XKCD',
-            'duration': 200,
-            'refresh_interval': 1800,
-            'dormant': False,
-            'layout': 'layout'
+# +
+all_plugins = m.active_plugins + m.dormant_plugins
+
+loaded_uuids = [p.uuid for p in m.active_plugins + m.dormant_plugins]
+    
+for plugin in m.configured_plugins:
+    plugin_uuid = plugin['base_config'].get('uuid')
+    if plugin_uuid in loaded_uuids:
+        logger.info(f"Plugin {plugin['plugin']} (UUID: {plugin_uuid}) is already loaded. Skipping load.")
+# -
+
+[p['base_config'].get('uuid') for p in m.configured_plugins]
+
+m.configured_plugins[0]['base_config'].get('uuid')
+
+[p.uuid for p in m.active_plugins + m.dormant_plugins]
+
+m.configured_plugins
+
+m.load_plugins()
+
+m.active_plugins
+
+
+
+c =   {'plugin': 'word_clock',
+        'base_config':{
+            'name': 'Word Clock',
+            'duration': 130,
+            'refresh_interval': 60,
+            'layout': 'layout',
         },
-        'plugin_params':{
-            'max_x': 800,
-            'max_y': 600,
-            'resize': False,
-            'max_retries': 5
-        }
-m.add
+        'plugin_params': {
+            'foo': 'bar',
+            'spam': 7,
+            'username': 'Monty'}
+    }
+m.add_plugin(c)
+
+c
+
+m.configured_plugins
 
 # +
 import time
@@ -875,5 +956,7 @@ try:
 except KeyboardInterrupt:
     logger.info("Toy loop interrupted. Exiting gracefully.")
 # -
+
+
 
 #
