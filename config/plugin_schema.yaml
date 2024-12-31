@@ -18,7 +18,7 @@ plugin_config:
         required: true
         description: 'Layout to use for displaying plugin'
     cache_dir:
-        type: str
+        type: (str, None)
         default: null
         description: 'Location within the cache to store cached content for this plugin'
     force_onebit:
