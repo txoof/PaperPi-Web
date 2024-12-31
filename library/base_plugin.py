@@ -96,7 +96,7 @@ class BasePlugin():
         dormant: bool = False,
         cache_expire: int = 2,
         cache_dir: Path = None,
-        cache_root: Path = Path('/tmp/BasePlugin_cache/'),
+        cache_root: Path = None,
         layout: dict = {},
         *args,
         **kwargs,
@@ -343,6 +343,9 @@ class BasePlugin():
             raise ValueError(f'Resolution must have length == 2')
         if not all(isinstance(v, int) for v in value):
             raise ValueError('Resolution values must be type int')
+        for i in value:
+            if i <=0:
+                raise ValueError('Resolution values must be > 0')
 
         self._resolution = value
 
@@ -405,9 +408,9 @@ class BasePlugin():
     @cache_expire.setter
     def cache_expire(self, value):
         if not isinstance(value, (int, float)):
-            raise PluginError(f"Invalid cache_expire value: '{value}' must be an integer/float", plugin_name=self.name)
+            raise TypeError(f"Invalid cache_expire value: '{value}' must be an integer/float")
         if value <= 0:
-            raise PluginError(f"cache_expire must be > 0", plugin_name=self.name)
+            raise ValueError(f"cache_expire must be > 0")
         self._cache_expire = value
 
         logger.info(f"{self.name} - Cache expiration set to {self.cache_expire} days.")
@@ -418,6 +421,9 @@ class BasePlugin():
 
     @cache_root.setter
     def cache_root(self, value):
+        if not value:
+            value = Path('/tmp/BasePlugin_cache/')
+            
         if not isinstance(value, (Path, str)):
             raise TypeError(f"Invalid cache_root value: '{value}' must be a string or Path.")
         self._cache_root = Path(value)

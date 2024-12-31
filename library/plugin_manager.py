@@ -154,7 +154,11 @@ class PluginManager:
         schema = self.main_schema
         if schema:
             logger.info("Validating config against main schema...")
-            self._validate_config(value, schema)
+            try:
+                self._validate_config(value, schema)
+            except ValueError as e:
+                logger.error(f"Failed to validate configuration: {e}")
+                return
 
         self._config = value
         logger.info("Configuration successfully updated.")
@@ -320,17 +324,21 @@ class PluginManager:
         # Validate new base configuration against global plugin schema
         logger.info(f"Reconfiguring plugin: {plugin_name} (UUID: {plugin_uuid})")
         global_schema = self.plugin_schema.get('plugin_config', {})
-        self._validate_config(new_config, global_schema)
+        try:
+            self._validate_config(new_config, global_schema)            
     
-        # Load and validate plugin-specific schema if params are provided
-        if new_params:
-            plugin_schema = self._load_plugin_schema(plugin_name)
-            if plugin_schema:
-                logger.info(f"Validating {plugin_name} against specific schema...")
-                self._validate_config(new_params, plugin_schema)
-    
-            # Update plugin-specific parameters
-            plugin.config.update(new_params)
+            # Load and validate plugin-specific schema if params are provided
+            if new_params:
+                plugin_schema = self._load_plugin_schema(plugin_name)
+                if plugin_schema:
+                    logger.info(f"Validating {plugin_name} against specific schema...")
+                    self._validate_config(new_params, plugin_schema)
+        
+                # Update plugin-specific parameters
+                plugin.config.update(new_params)
+        except ValueError as e:
+            logger.error(f"Failed to reconfigure plugin {plugin_name} (UUID: {plugin_uuid}): {e}")
+            return
     
         # Apply new base configuration
         plugin.duration = new_config.get('duration', plugin.duration)
@@ -476,7 +484,16 @@ class PluginManager:
             global_schema = self.plugin_schema.get('plugin_config', {})
             logger.info("=" * 40)
             logger.info(f"Validating {plugin_name} against global schema...")
-            self._validate_config(base_config, global_schema)
+            try:
+                self._validate_config(base_config, global_schema)
+            except ValueError as e:
+                error_message = str(e)
+                if 'layout_name is required but missing' in error_message:
+                    msg = f"{plugin_name} missing 'layout_name'. Marking as 'load_failed'."
+                    logger.warning(msg)
+                    plugin_entry['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
+                    continue  # Skip adding this plugin
+            
 
             # Assign UUID and final setup
             plugin_uuid = str(uuid.uuid4())[:8]
@@ -725,8 +742,8 @@ class PluginManager:
                 return False
     
             # Load layout
-            if 'layout' in base_config:
-                layout_name = base_config['layout']
+            if 'layout_name' in base_config:
+                layout_name = base_config['layout_name']
                 if hasattr(module.layout, layout_name):
                     layout = getattr(module.layout, layout_name)
                     base_config['layout'] = layout
@@ -736,7 +753,7 @@ class PluginManager:
                     plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
                     return False
             else:
-                msg = f"{plugin_name} is missing a configured layout"
+                msg = f"{plugin_name} is missing a configured layout_name"
                 logger.warning(msg)
                 plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
                 return False
@@ -881,7 +898,7 @@ configured_plugins = [
             'duration': 100,
             # 'refresh_interval': 60,
             # 'dormant': False,
-            'layout': 'layout',
+            'layout_name': 'layout',
          }
     },
     # {'plugin': 'debugging',
@@ -903,7 +920,7 @@ configured_plugins = [
             'name': 'Word Clock',
             'duration': 130,
             'refresh_interval': 60,
-            'layout': 'layout',
+            'layout_name': 'layout',
         },
         'plugin_params': {
             'foo': 'bar',
@@ -938,6 +955,11 @@ m.configured_plugins
 m.load_plugins()
 
 m.list_plugins()
+
+m.active_plugins
+
+m.active_plugins[0].update()
+m.active_plugins[0].image
 
 c = {'plugin': 'xkcd_comicx',
         'base_config': {
