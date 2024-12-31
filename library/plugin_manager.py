@@ -82,6 +82,12 @@ class PluginManager:
         manager.load_plugins()
         manager.update_plugins()
     """    
+    # ----- Plugin Status Constants
+    ACTIVE = 'active'
+    DORMANT = 'dormant'
+    LOAD_FAILED = 'load_failed'
+    PENDING = 'pending_validation'
+    
     # ----- Init
     def __init__(
         self,
@@ -615,7 +621,7 @@ class PluginManager:
         for key in required_keys:
             if key not in plugin_config:
                 logger.error(f"Plugin configuration missing required key: {key}")
-                plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': f"Missing required key: {key}"}
+                plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': f"Missing required key: {key}"}
                 return False
     
         plugin_name = plugin_config['plugin']
@@ -627,7 +633,7 @@ class PluginManager:
 
     
         # Default to load_failed until plugin is successfully loaded
-        plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': 'Pending validation'}
+        plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': 'Pending validation'}
     
         try:
             # Validate Against Global Plugin Schema
@@ -659,7 +665,7 @@ class PluginManager:
             else:
                 msg = f"{plugin_name}: update_function not found"
                 logger.warning(msg)
-                plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
+                plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
                 return False
     
             # Load layout
@@ -671,12 +677,12 @@ class PluginManager:
                 else:
                     msg = f"Layout '{layout_name}' not found in {plugin_name}"
                     logger.warning(msg)
-                    plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
+                    plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
                     return False
             else:
                 msg = f"{plugin_name} is missing a configured layout"
                 logger.warning(msg)
-                plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
+                plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
                 return False
     
             # Instantiate and Add to Active/Dormant Lists
@@ -708,15 +714,15 @@ class PluginManager:
         except ValueError as e:
             msg = f"Plugin {plugin_name} failed validation: {e}"
             logger.warning(msg)
-            plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
+            plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
         except ModuleNotFoundError as e:
             msg = f"Failed to load {plugin_name}: {e}"
             logger.warning(msg)
-            plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
+            plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
         except Exception as e:
             msg = f"Unexpected error adding {plugin_name}: {e}"
             logger.error(msg)
-            plugin_config['plugin_status'] = {'status': 'load_failed', 'reason': msg}
+            plugin_config['plugin_status'] = {'status': self.LOAD_FAILED, 'reason': msg}
 
         finally:
             # Always track plugin configuration regardless of success/failure
