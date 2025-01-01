@@ -12,7 +12,7 @@ plugin_config:
         type: int
         default: 60
         description: 'Amount of time in seconds between refreshing the data for this plugin'
-    layout:
+    layout_name:
         type: str
         default: layout
         required: true
