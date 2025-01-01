@@ -1,7 +1,7 @@
 # XKCD Comic
 # Default configuration with suggested settings for this plugin
 name: Debugging 50
-layout: debugging_basic
+layout_name: debugging_basic
 duration: 50
 refresh_interval: 5
 description: 'Randomly crash and randomly go to high priority'

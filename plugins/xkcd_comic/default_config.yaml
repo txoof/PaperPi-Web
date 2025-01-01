@@ -1,7 +1,7 @@
 # XKCD Comic
 # Default configuration with suggested settings for this plugin
 name: XKCD Comic
-layout: layout
+layout_name: layout
 duration: 240
 refresh_interval: 1200
 description: 'Show a random XKCD comic'
