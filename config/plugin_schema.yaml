@@ -1,34 +1,33 @@
 # schema for validating plugin configuration as they are loaded
-plugin_config:
-    name:
-        type: str
-        default: null
-        description: 'Human readable plugin identifier'
-    duration:
-        type: int
-        default: 120
-        description: 'Amount of time in seconds to display plugin'
-    refresh_interval:
-        type: int
-        default: 60
-        description: 'Amount of time in seconds between refreshing the data for this plugin'
-    layout_name:
-        type: str
-        default: layout
-        required: true
-        description: 'Layout to use for displaying plugin'
-    cache_dir:
-        type: (str, None)
-        default: null
-        description: 'Location within the cache to store cached content for this plugin'
-    force_onebit:
-        type: bool
-        default: false
-    screen_mode:
-        type: str
-        default: 'L'
-        allowed: ['1', 'L', 'RGB']
-    dormant:
-        type: bool
-        default: false
-        description: 'Dormant plugins only display when required (e.g. when Spotify is actively playing)'
+name:
+    type: str
+    default: null
+    description: 'Human readable plugin identifier'
+duration:
+    type: int
+    default: 120
+    description: 'Amount of time in seconds to display plugin'
+refresh_interval:
+    type: int
+    default: 60
+    description: 'Amount of time in seconds between refreshing the data for this plugin'
+layout_name:
+    type: str
+    default: layout
+    required: true
+    description: 'Layout to use for displaying plugin'
+cache_dir:
+    type: (str, None)
+    default: null
+    description: 'Location within the cache to store cached content for this plugin'
+force_onebit:
+    type: bool
+    default: false
+screen_mode:
+    type: str
+    default: 'L'
+    allowed: ['1', 'L', 'RGB']
+dormant:
+    type: bool
+    default: false
+    description: 'Dormant plugins only display when required (e.g. when Spotify is actively playing)'
