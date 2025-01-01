@@ -55,6 +55,7 @@ def validate_path(func):
     return wrapper
 
 
+# +
 class PluginManager:
     """
     Manages loading, configuration, and lifecycle of plugins.
@@ -66,7 +67,7 @@ class PluginManager:
     ACTIVE = 'active'
     DORMANT = 'dormant'
     LOAD_FAILED = 'load_failed'
-    CONFIG_FAILED = 'config_failed',
+    CONFIG_FAILED = 'config_failed'
     CRASHED = 'crashed'
     PENDING = 'pending_validation'   
     
@@ -359,7 +360,7 @@ class PluginManager:
         self._plugin_schema_file = schema_path
 
     # ----------------------------------------------------------------------
-    #               PLUGIN LISTS AND THEIR SETTERS
+    # Plugin lists, setters and associated functions
     # ----------------------------------------------------------------------
     @property
     def configured_plugins(self) -> List[dict]:
@@ -411,16 +412,6 @@ class PluginManager:
         self._configured_plugins = plugins        
 
     def add_plugin(self, plugin_config: dict, force_duplicate: bool = False):
-        """
-        Add a plugin configuration to the list of configured plugins.
-        
-        Args:
-            plugin_config (dict): The plugin configuration to validate and add.
-        
-        Raises:
-            ValueError: If the plugin configuration does not conform to the schema.
-            FileNotFoundError: If the plugin schema file is missing.
-        """
         if not self.plugin_schema_file:
             raise FileNotFoundError("Plugin schema is required, but is not set.")
     
@@ -428,20 +419,21 @@ class PluginManager:
         if not plugin_id:
             raise ValueError("Plugin configuration does not contain a valid 'plugin' identifier.")
     
-        # Prepare initial status
+        plugin_name = plugin_config.get('plugin_config', {}).get('name', 'UNSET NAME')
+    
+        logger.info(f"Adding plugin {plugin_name} of type {plugin_id}...")
+    
         plugin_status = {
             'status': self.PENDING,
             'reason': 'Pending validation'
         }
     
-        # Load base plugin schema
         plugin_schema_file_path = self.plugin_schema_file
         try:
             plugin_schema = self.load_schema(plugin_schema_file_path)
         except FileNotFoundError:
             raise FileNotFoundError(f"Base plugin schema file not found at {plugin_schema_file_path}")
-        
-        # Validate plugin config
+    
         try:
             validated_plugin_config = self.validate_config(
                 plugin_config.get('plugin_config', {}),
@@ -450,10 +442,9 @@ class PluginManager:
         except ValueError:
             plugin_status['status'] = self.CONFIG_FAILED
             plugin_status['reason'] = 'Plugin config validation failed'
-            logger.error(f"Plugin config validation failed for {plugin_id}")
+            logger.error(f"Plugin config validation failed for {plugin_name}")
             raise
     
-        # Attempt to load per-plugin param schema (optional)
         try:
             plugin_param_schema_file = self.plugin_path / plugin_id / self.plugin_param_filename
             plugin_param_schema = self.load_schema(plugin_param_schema_file, cache=False)
@@ -461,14 +452,8 @@ class PluginManager:
             logger.debug(f"Parameters schema file not found for plugin '{plugin_id}'. Assuming none required.")
             plugin_param_schema = {}
     
-        # Validate plugin parameters if available
         plugin_params = plugin_config.get('plugin_params', {})
         try:
-            if plugin_params and not plugin_param_schema:
-                logger.warning(
-                    f"Supplied parameters for plugin '{plugin_id}' cannot be validated "
-                    "due to missing param schema file."
-                )
             validated_plugin_params = self.validate_config(plugin_params, plugin_param_schema)
         except ValueError:
             plugin_status['status'] = self.CONFIG_FAILED
@@ -476,16 +461,13 @@ class PluginManager:
             logger.error(f"Plugin params validation failed for {plugin_id}")
             raise
     
-        # Determine final plugin status
         if validated_plugin_config.get('dormant', False):
             plugin_status.update(status=self.DORMANT, reason='Configuration validated (dormant)')
         else:
             plugin_status.update(status=self.ACTIVE, reason='Configuration validated')
     
-        # Generate partial-UUID for tracking
         plugin_uuid = str(uuid4())[:8]
     
-        # Build final config
         final_config = {
             'plugin': plugin_id,
             'plugin_config': validated_plugin_config,
@@ -494,37 +476,124 @@ class PluginManager:
             'plugin_status': plugin_status
         }
     
-        # Check for duplicate configurations
-    
+        # Duplicate check
         if not force_duplicate:
             new_signature = self.plugin_config_signature(final_config)
             for existing_plugin in self.configured_plugins:
                 if self.plugin_config_signature(existing_plugin) == new_signature:
-                    existing_uuid = existing_plugin.get('uuid')
-                    existing_name = existing_plugin.get('plugin_config', {}).get('name', 'UNSET NAME')
-                    logger.info(f"Plugin is identical to {existing_name}, UUID: {existing_uuid}. Skipping addition. Use `force_duplicate=True` to force.")
-                    return
-                    
-        # Add to configured plugins
-        self.configured_plugins.append(final_config)
+                    logger.info(
+                        f"Duplicate detected: Plugin '{plugin_id}' already exists. Skipping addition."
+                    )
+                    return  # Early return to avoid adding duplicate
     
-        # Log success
+        self.configured_plugins.append(final_config)
         logger.info(
             f"Plugin '{plugin_id}' added with UUID={plugin_uuid} and status={plugin_status['status']}."
         )
         return final_config
 
+    def add_plugins(self, plugin_configs: list[dict], force_duplicate: bool = False):
+        """
+        Add multiple plugin configurations to the list of configured plugins.
+    
+        Args:
+            plugin_configs (list[dict]): A list of plugin configurations to validate and add.
+            force_duplicate (bool): If True, allows duplicate plugins to be added.
+    
+        Returns:
+            dict: A summary containing the number of successful and failed plugin additions.
+        """
+        results = {
+            'added': 0,
+            'failed': 0,
+            'duplicated': 0,
+            'failures': [],
+            'duplicate_config': [],           
+        }
+    
+        for plugin_config in plugin_configs:
+            plugin_id = plugin_config.get('plugin', 'UNKNOWN')
+            try:
+                returned_config = self.add_plugin(plugin_config, force_duplicate=force_duplicate)
+                if returned_config:
+                    results['added'] += 1
+                else:
+                    results['duplicated'] += 1
+                    results['duplicate_config'].append({
+                        'plugin': plugin_id,
+                        'reason': 'Duplicate plugin with identical configuration found.'
+                    })
+            except (ValueError, FileNotFoundError) as e:
+                # Mark the plugin as failed, but add to the list with status CONFIG_FAILED
+                plugin_status = {
+                    'status': self.CONFIG_FAILED,
+                    'reason': str(e)
+                }
+                plugin_uuid = str(uuid4())[:8]
+    
+                failed_config = {
+                    'plugin': plugin_id,
+                    'plugin_config': plugin_config.get('plugin_config', {}),
+                    'plugin_params': plugin_config.get('plugin_params', {}),
+                    'uuid': plugin_uuid,
+                    'plugin_status': plugin_status
+                }
+    
+                self.configured_plugins.append(failed_config)
+                results['failed'] += 1
+                results['failures'].append({
+                    'plugin': plugin_id,
+                    'reason': str(e)
+                })
+    
+                logger.warning(
+                    f"Plugin '{plugin_id}' failed to add. Reason: {str(e)}"
+                )
+    
+        logger.info(
+            f"Plugin batch processing completed. Added: {results['added']}, "
+            f"Failed: {results['failed']}."
+        )
+    
+        return results
+        
+    def remove_plugin_config(self, uuid: str) -> bool:
+        """
+        Remove a plugin configuration by its UUID.
+    
+        Args:
+            uuid (str): The UUID of the plugin to remove.
+    
+        Returns:
+            bool: True if the plugin was removed, False if no match was found.
+        """
+        for i, plugin in enumerate(self.configured_plugins):
+            if plugin.get('uuid') == uuid:
+                removed_plugin = self.configured_plugins.pop(i)
+                logger.info(f"Plugin '{removed_plugin['plugin']}' with UUID={uuid} removed.")
+                return True
+        
+        logger.warning(f"No plugin with UUID={uuid} found.")
+        return False
+
     def plugin_config_signature(self, plugin_config: dict) -> str:
         """Generate a hash signature of a plugin config, ignoring transient fields."""
         cfg = dict(plugin_config)
-        
-        # Remove transient fields like 'uuid' from comparison
+    
+        # Ensure deep copy to avoid modifying the original
+        cfg['plugin_config'] = dict(cfg.get('plugin_config', {}))
+        cfg['plugin_params'] = dict(cfg.get('plugin_params', {}))
+    
+        # Remove transient fields
         for key in self._transient_config_keys:
             cfg.pop(key, None)
-
-        # Convert to deterministic JSON and hash it
+    
+        # Convert to JSON for consistent ordering and hash it
         cfg_json = json.dumps(cfg, sort_keys=True)
-        return hashlib.md5(cfg_json.encode('utf-8')).hexdigest()  
+        return hashlib.md5(cfg_json.encode('utf-8')).hexdigest()
+
+
+# -
 
     # # ----- VALIDATION -----
     # def load_schema(self, schema_file: str) -> dict:
