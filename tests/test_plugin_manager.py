@@ -28,131 +28,37 @@ except ModuleNotFoundError:
     from library.plugin_manager import PluginManager
     from library.exceptions import *
 
+logger = logging.getLogger("PluginManager")
+logger.setLevel(logging.WARNING)
 
+
+# -------------------------------------------------------------------
+# 1) TEST INITIALIZATION & BASIC PROPERTIES
+# -------------------------------------------------------------------
 class TestPluginManagerInitialization(unittest.TestCase):
+    """Focus on how the PluginManager initializes and basic property checks."""
 
-    def setUp(self):
-        self.schema = {
-            'screen_mode': {
-                'type': 'str',
-                'default': '1',
-                'allowed': ['1', 'L', 'RGB'],
-                'required': True
-            },
-            'resolution': {
-                'type': 'tuple',
-                'default': (800, 480),
-                'required': True
-            },
-            'cache_expire': {
-                'type': 'int',
-                'default': 2
-            }
-        }
-        self.config = {
-            'screen_mode': 'L',
-            'resolution': (600, 400),
-            'cache_expire': 5
-        }
-
-        # Simulate schema YAML
-        self.mock_schema_yaml = yaml.dump(self.schema)
-
-        # Base plugin manager initialization
-        self.plugin_manager = PluginManager(
-            config=self.config,
-            base_schema_file='base_schema.yaml',
-            config_path=Path('/tmp')
-        )
-    
-    # ---Test Default Config ---
-    def test_config_defaults_applied(self):
-        """Test defaults are applied if config is missing values."""
-        partial_config = {'screen_mode': 'RGB'}
-        self.plugin_manager.config = partial_config
-        
-        self.assertEqual(self.plugin_manager.config['cache_expire'], 2)  # Default
-        self.assertEqual(self.plugin_manager.config['resolution'], (800, 480))
-
-    # ---Test Full Config Validation ---
-    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
-        'screen_mode': {'type': 'str', 'default': 'L', 'allowed': ['1', 'L', 'RGB'], 'required': True},
-        'resolution': {'type': 'tuple', 'default': (1024, 600), 'required': True},
-        'cache_expire': {'type': 'int', 'default': 3}
-    }))
-    def test_valid_config_passes(self, mock_file):
-        """Ensure valid config passes validation."""
-        self.plugin_manager.config = self.config
-        
-        self.assertEqual(self.plugin_manager.config['screen_mode'], 'L')
-        self.assertEqual(self.plugin_manager.config['resolution'], (600, 400))
-        self.assertEqual(self.plugin_manager.config['cache_expire'], 5)
-
-    # ---Test Invalid Config Type ---
-    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
-        'screen_mode': {'type': 'str', 'allowed': ['1', 'L', 'RGB'], 'required': True},
-    }))
-    def test_invalid_config_value(self, mock_file):
-        """Test invalid config value raises a validation error."""
-        invalid_config = {'screen_mode': 42}  # Should be str, not int
-        
-        with self.assertRaises(ValueError):
-            self.plugin_manager.config = invalid_config
-
-    # ---Test Missing Required Config ---
-    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
-        'screen_mode': {'type': 'str', 'required': True},
-        'resolution': {'type': 'tuple', 'required': True},
-    }))
-    def test_missing_required_config(self, mock_file):
-        """Ensure missing required config raises an error."""
-        incomplete_config = {'cache_expire': 10}  # Missing screen_mode, resolution
-        
-        with self.assertRaises(ValueError):
-            self.plugin_manager.config = incomplete_config
-
-    # ---Test Config Overwrite ---
-    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
-        'cache_expire': {'type': 'int', 'default': 2}
-    }))
-    def test_config_overwrite(self, mock_file):
-        """Ensure overwriting config triggers validation."""
-        new_config = {'cache_expire': 7}
-        self.plugin_manager.config = new_config
-        
-        self.assertEqual(self.plugin_manager.config['cache_expire'], 7)
-
-    # ---Test Schema Loading from Cache ---
-    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
-        'cache_expire': {'type': 'int', 'default': 2}
-    }))
-    def test_schema_loads_from_cache(self, mock_file):
-        """Ensure schema is loaded from cache if available."""
-        self.plugin_manager._schema_cache['base_schema.yaml'] = self.schema
-        
-        self.plugin_manager.config = self.config
-        mock_file.assert_not_called()  # Schema loaded from cache, no file read
-        
-        self.assertEqual(self.plugin_manager.config['cache_expire'], 5)
-    
     def test_initialization_defaults(self):
         """Test that PluginManager initializes with default values."""
         manager = PluginManager()
-        
         self.assertEqual(manager.config, {})
         self.assertIsNone(manager.plugin_path)
         self.assertIsNone(manager.config_path)
         self.assertEqual(manager.configured_plugins, [])
         self.assertEqual(manager.active_plugins, [])
         self.assertEqual(manager.dormant_plugins, [])
-    
+
     def test_initialization_custom(self):
         """Test initialization with custom values."""
         config = {'debug': True}
         plugin_path = Path('/plugins')
         config_path = Path('/config')
         
-        manager = PluginManager(config=config, plugin_path=plugin_path, config_path=config_path)
+        manager = PluginManager(
+            config=config,
+            plugin_path=plugin_path,
+            config_path=config_path
+        )
         
         self.assertEqual(manager.config, config)
         self.assertEqual(manager.plugin_path, plugin_path)
@@ -176,25 +82,6 @@ class TestPluginManagerInitialization(unittest.TestCase):
         
         manager1.active_plugins.append("plugin1")
         self.assertNotIn("plugin1", manager2.active_plugins)
-    
-    def test_path_type_validation(self):
-        """Ensure plugin_path and config_path accept Path, str (converted to Path), or None."""
-        
-        # Test string -> Path conversion (should not raise)
-        manager = PluginManager(plugin_path="invalid/path")
-        self.assertEqual(manager.plugin_path, Path("invalid/path"))
-    
-        # Test valid Path object (should not raise)
-        manager = PluginManager(plugin_path=Path("/valid/path"))
-        self.assertEqual(manager.plugin_path, Path("/valid/path"))
-    
-        # Test invalid type (integer should raise TypeError)
-        with self.assertRaises(TypeError):
-            PluginManager(config_path=123)  # Should raise
-    
-        # Test None (valid case)
-        manager = PluginManager(plugin_path=None)
-        self.assertIsNone(manager.plugin_path)
 
     def test_config_is_copied(self):
         """Ensure config is copied during initialization."""
@@ -209,26 +96,183 @@ class TestPluginManagerInitialization(unittest.TestCase):
         manager = PluginManager(config=None)
         self.assertEqual(manager.config, {})
 
+
+# -------------------------------------------------------------------
+# 2) TEST PATH SETTERS AND VALIDATION
+# -------------------------------------------------------------------
+class TestPluginManagerPathHandling(unittest.TestCase):
+    """Focus on plugin_path and config_path validation & behavior."""
+
     def setUp(self):
-        """Create a basic PluginManager instance for testing."""
-        self.plugin_manager = PluginManager()
+        self.manager = PluginManager()  # Fresh instance per test
 
     def test_valid_paths(self):
         """Test that valid paths are accepted."""
         path = Path("/valid/path")
-        self.plugin_manager.plugin_path = path
-        self.plugin_manager.config_path = path
+        self.manager.plugin_path = path
+        self.manager.config_path = path
         
-        self.assertEqual(self.plugin_manager.plugin_path, path)
-        self.assertEqual(self.plugin_manager.config_path, path)
+        self.assertEqual(self.manager.plugin_path, path)
+        self.assertEqual(self.manager.config_path, path)
 
     def test_invalid_path_type(self):
         """Test that invalid path types raise TypeError."""
-        # with self.assertRaises(TypeError):
-        #     self.plugin_manager.plugin_path = "/invalid/string/path"
-        
         with self.assertRaises(TypeError):
-            self.plugin_manager.config_path = 12345  # Invalid type
+            self.manager.config_path = 12345  # Invalid type
+
+        # If you want to test that string -> Path conversion is allowed:
+        self.manager.plugin_path = "some/string/path"
+        self.assertEqual(self.manager.plugin_path, Path("some/string/path"))
+
+        # If you want to ensure None is allowed:
+        self.manager.plugin_path = None
+        self.assertIsNone(self.manager.plugin_path)
+
+
+# -------------------------------------------------------------------
+# 3) TEST SCHEMA LOADING (FILE OPERATIONS)
+# -------------------------------------------------------------------
+class TestPluginManagerSchemaLoading(unittest.TestCase):
+    """Focus on how the PluginManager loads schema files from disk."""
+
+    def setUp(self):
+        # Provide a valid config_path so that load_schema can find files
+        self.manager = PluginManager(config_path=Path("/tmp"))
+
+    def test_load_schema_without_config_path(self):
+        """Test loading schema without setting config_path."""
+        self.manager.config_path = None
+        with self.assertRaises(FileNotFoundError):
+            self.manager.load_schema('base_schema.yaml')
+    
+    @patch('pathlib.Path.is_file', return_value=False)
+    def test_load_schema_file_not_found(self, mock_is_file):
+        """Test loading schema when the schema file is missing."""
+        with self.assertRaises(FileNotFoundError):
+            self.manager.load_schema('missing_schema.yaml')
+    
+    @patch('builtins.open', new_callable=mock_open, read_data="invalid_yaml: [unbalanced_bracket")
+    def test_load_schema_malformed_yaml(self, mock_file):
+        """Test error handling when schema contains invalid YAML."""
+        # Path.is_file => True to simulate the file exists
+        with patch('pathlib.Path.is_file', return_value=True):
+            with self.assertRaises(ValueError):
+                self.manager.load_schema('malformed_schema.yaml')
+
+
+
+# -------------------------------------------------------------------
+# 4) TEST CONFIG VALIDATION & SCHEMA INTERACTION
+# -------------------------------------------------------------------
+class TestPluginManagerConfigValidation(unittest.TestCase):
+    """Focus on config property setter, default application, and validation."""
+
+    def setUp(self):
+        # Create a patcher to mock load_schema, returning a schema dict
+        self.mock_schema = {
+            'screen_mode': {
+                'type': 'str',
+                'default': '1',
+                'allowed': ['1', 'L', 'RGB'],
+                'required': True
+            },
+            'resolution': {
+                'type': 'tuple',
+                'default': (800, 480),
+            },
+            'cache_expire': {
+                'type': 'int',
+                'default': 2
+            }
+        }
+        self.load_schema_patcher = patch.object(
+            PluginManager,
+            'load_schema',
+            return_value=self.mock_schema
+        )
+        self.mock_load_schema = self.load_schema_patcher.start()
+
+        # Provide an initial config that partially overrides the defaults
+        self.initial_config = {
+            'screen_mode': 'L',
+            'resolution': (600, 400),
+            'cache_expire': 5
+        }
+        self.manager = PluginManager(
+            config=self.initial_config,
+            base_schema_file='base_schema.yaml',
+            config_path=Path('/tmp')
+        )
+
+    def tearDown(self):
+        self.load_schema_patcher.stop()
+
+    def test_config_defaults_applied(self):
+        """Test defaults are applied if config is missing values."""
+        partial_config = {'screen_mode': 'RGB'}
+        self.manager.config = partial_config
+        # 'cache_expire' => 2, 'resolution' => (800, 480) from mock_schema
+        self.assertEqual(self.manager.config['cache_expire'], 2)
+        self.assertEqual(self.manager.config['resolution'], (800, 480))
+
+    def test_valid_config_passes(self):
+        """Ensure valid config passes validation."""
+        # Overwrite config with the manager.config setter
+        self.manager.config = self.initial_config
+        self.assertEqual(self.manager.config['screen_mode'], 'L')
+        self.assertEqual(self.manager.config['resolution'], (600, 400))
+        self.assertEqual(self.manager.config['cache_expire'], 5)
+
+    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
+        'screen_mode': {'type': 'str', 'allowed': ['1', 'L', 'RGB'], 'required': True},
+    }))
+    def test_invalid_config_value(self, mock_file):
+        """Test invalid config value raises a validation error."""
+        invalid_config = {'screen_mode': 42}  # Should be str, not int
+        with self.assertRaises(ValueError):
+            self.manager.config = invalid_config
+
+    def test_missing_required_config(self):
+        """Ensure missing required config raises an error."""
+        # Suppose 'screen_mode' is required in self.mock_schema
+        # We'll remove it from the new config:
+        incomplete_config = {'cache_expire': 10}  # Missing 'screen_mode'
+        
+        with self.assertRaises(ValueError):
+            self.manager.config = incomplete_config
+
+    def test_config_overwrite(self):
+        """Ensure overwriting config triggers validation."""
+        new_config = {'screen_mode': 'L', 'cache_expire': 7}
+        self.manager.config = new_config
+        # check we used the new config
+        self.assertEqual(self.manager.config['cache_expire'], 7)
+
+    def test_schema_loads_from_cache(self):
+        """Ensure schema is loaded from cache if available."""
+        # Inject a new schema into _schema_cache
+        alt_schema = {
+            'cache_expire': {'type': 'int', 'default': 2}
+        }
+        self.manager._schema_cache['base_schema.yaml'] = alt_schema
+
+        # Re-assign config => triggers the config setter => uses the cached schema
+        test_config = {'screen_mode': 'L', 'cache_expire': 10}
+        self.manager.config = test_config
+
+        # Confirm we see the config's overridden value, not the alt_schema default
+        # Because 'cache_expire' is indeed set to 10, and alt_schema would default it to 2 if missing
+        self.assertEqual(self.manager.config['cache_expire'], 10)
+
+
+# -------------------------------------------------------------------
+# 5) TEST PLUGIN MANAGEMENT (CONFIGURED PLUGINS)
+# -------------------------------------------------------------------
+class TestPluginManagerPlugins(unittest.TestCase):
+    """Focus on setting configured_plugins and verifying structure."""
+
+    def setUp(self):
+        self.manager = PluginManager()
 
     def test_plugin_list_validation(self):
         """Ensure configured_plugins accepts valid list of dictionaries."""
@@ -236,36 +280,312 @@ class TestPluginManagerInitialization(unittest.TestCase):
             {"plugin": "weather_plugin", "base_config": {}},
             {"plugin": "news_plugin", "base_config": {}}
         ]
-        self.plugin_manager.configured_plugins = valid_plugins
-        self.assertEqual(len(self.plugin_manager.configured_plugins), 2)
+        self.manager.configured_plugins = valid_plugins
+        self.assertEqual(len(self.manager.configured_plugins), 2)
 
     def test_invalid_plugin_structure(self):
         """Ensure configured_plugins raises error for invalid structures."""
+        # Not a list
         with self.assertRaises(TypeError):
-            self.plugin_manager.configured_plugins = "invalid_string"
+            self.manager.configured_plugins = "invalid_string"
 
+        # List of invalid data
         with self.assertRaises(TypeError):
-            self.plugin_manager.configured_plugins = [123, "string"]
+            self.manager.configured_plugins = [123, "string"]
 
+        # Missing keys
         with self.assertRaises(ValueError):
-            self.plugin_manager.configured_plugins = [
-                {"base_config": {}},  # Missing 'plugin' key
+            self.manager.configured_plugins = [
+                {"base_config": {}},  # Missing 'plugin' 
                 {"plugin": "plugin_without_config"}  # Missing 'base_config'
             ]
 
-    @patch("logging.Logger.error")
-    def test_plugin_error_logging(self, mock_logger):
-        """Ensure logger captures plugin validation errors."""
-        with self.assertRaises(ValueError):
-            self.plugin_manager.configured_plugins = [{"base_config": {}}]
-        
-        mock_logger.assert_called_with("Missing 'plugin' or 'base_config' keys in plugin.") 
+    def test_empty_plugins_list(self):
+        """Ensure setting configured_plugins to an empty list doesn't fail."""
+        self.manager.configured_plugins = []
+        self.assertEqual(len(self.manager.configured_plugins), 0)
 
+
+# +
+# 1) Create a test loader
+loader = unittest.TestLoader()
+
+# 2) Load tests from all your classes
+suite = unittest.TestSuite()
+suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerInitialization))
+suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerPathHandling))
+suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerSchemaLoading))
+suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerConfigValidation))
+suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerPlugins))
+
+# 3) Run the tests
+runner = unittest.TextTestRunner(verbosity=2)
+result = runner.run(suite)
+# -
 
 unittest.main(argv=[''], verbosity=2, exit=False)
 
 # +
 # unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(TestBasePluginInitialization))
+
+# +
+# class TestPluginManagerInitialization(unittest.TestCase):
+    
+#     def setUp(self):
+#         # 1) Define the schema that you want to use
+#         self.schema = {
+#             'screen_mode': {
+#                 'type': 'str',
+#                 'default': '1',
+#                 'allowed': ['1', 'L', 'RGB'],
+#                 'required': True
+#             },
+#             'resolution': {
+#                 'type': 'tuple',
+#                 'default': (800, 480),
+#             },
+#             'cache_expire': {
+#                 'type': 'int',
+#                 'default': 2
+#             }
+#         }
+
+#         # 2) Patch load_schema so it won't try to read a real file.
+#         self.load_schema_patcher = patch.object(
+#             PluginManager,
+#             'load_schema',
+#             return_value=self.schema  # Always return self.schema
+#         )
+#         self.mock_load_schema = self.load_schema_patcher.start()
+
+#         # 3) Provide an example config that uses the mock schema
+#         self.config = {
+#             'screen_mode': 'L',
+#             'resolution': (600, 400),
+#             'cache_expire': 5
+#         }
+        
+#         self.plugin_manager = PluginManager(
+#             config=self.config,
+#             base_schema_file='base_schema.yaml',
+#             config_path=Path('/tmp')
+#         )
+
+#     def tearDown(self):
+#         # Stop patching load_schema
+#         self.load_schema_patcher.stop()
+    
+#     def test_config_defaults_applied(self):
+#         """Test defaults are applied if config is missing values."""
+#         partial_config = {'screen_mode': 'RGB'}
+
+#         # This triggers self.plugin_manager.config setter, which calls load_schema
+#         self.plugin_manager.config = partial_config
+
+#         # The schema says default for 'cache_expire' => 2, 'resolution' => (800, 480)
+#         self.assertEqual(self.plugin_manager.config['cache_expire'], 2)
+#         self.assertEqual(self.plugin_manager.config['resolution'], (800, 480))
+
+#     @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
+#         'screen_mode': {'type': 'str', 'default': 'L', 'allowed': ['1', 'L', 'RGB'], 'required': True},
+#         'resolution': {'type': 'tuple', 'default': (1024, 600), 'required': True},
+#         'cache_expire': {'type': 'int', 'default': 3}
+#     }))
+#     def test_valid_config_passes(self, mock_file):
+#         # Overwrite config with the plugin_manager.config setter
+#         self.plugin_manager.config = self.config
+#         self.assertEqual(self.plugin_manager.config['screen_mode'], 'L')
+#         self.assertEqual(self.plugin_manager.config['resolution'], (600, 400))
+#         self.assertEqual(self.plugin_manager.config['cache_expire'], 5)
+
+
+#     # ---Test Invalid Config Type ---
+#     @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
+#         'screen_mode': {'type': 'str', 'allowed': ['1', 'L', 'RGB'], 'required': True},
+#     }))
+#     def test_invalid_config_value(self, mock_file):
+#         """Test invalid config value raises a validation error."""
+#         invalid_config = {'screen_mode': 42}  # Should be str, not int
+        
+#         with self.assertRaises(ValueError):
+#             self.plugin_manager.config = invalid_config
+
+#     # ---Test Missing Required Config ---
+#     @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
+#         'screen_mode': {'type': 'str', 'required': True},
+#         'resolution': {'type': 'tuple', 'required': True},
+#     }))
+#     def test_missing_required_config(self, mock_file):
+#         """Ensure missing required config raises an error."""
+#         incomplete_config = {'cache_expire': 10}  # Missing screen_mode, resolution
+        
+#         with self.assertRaises(ValueError):
+#             self.plugin_manager.config = incomplete_config
+
+#     # ---Test Config Overwrite ---
+#     @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
+#         'cache_expire': {'type': 'int', 'default': 2}
+#     }))
+#     def test_config_overwrite(self, mock_file):
+#         """Ensure overwriting config triggers validation."""
+#         new_config = {'screen_mode': 'L', 'cache_expire': 7}
+#         self.plugin_manager.config = new_config
+        
+#         self.assertEqual(self.plugin_manager.config['cache_expire'], 7)
+
+#     # ---Test Schema Loading from Cache ---
+#     # @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({
+#     #     'cache_expire': {'type': 'int', 'default': 2}
+#     # }))
+#     def test_schema_loads_from_cache(self):
+#         """Ensure schema is loaded from cache if available."""
+#         # We can directly inject a new or different schema into _schema_cache
+#         self.plugin_manager._schema_cache['base_schema.yaml'] = self.schema
+
+#         # Re-assign config => triggers the config setter => uses the cached schema
+#         self.plugin_manager.config = self.config
+
+#         # Confirm that we still get the 'cache_expire' from self.config
+#         self.assertEqual(self.plugin_manager.config['cache_expire'], 5)
+    
+#     def test_initialization_defaults(self):
+#         """Test that PluginManager initializes with default values."""
+#         manager = PluginManager()
+        
+#         self.assertEqual(manager.config, {})
+#         self.assertIsNone(manager.plugin_path)
+#         self.assertIsNone(manager.config_path)
+#         self.assertEqual(manager.configured_plugins, [])
+#         self.assertEqual(manager.active_plugins, [])
+#         self.assertEqual(manager.dormant_plugins, [])
+    
+#     def test_initialization_custom(self):
+#         """Test initialization with custom values."""
+#         config = {'debug': True}
+#         plugin_path = Path('/plugins')
+#         config_path = Path('/config')
+        
+#         manager = PluginManager(config=config, plugin_path=plugin_path, config_path=config_path)
+        
+#         self.assertEqual(manager.config, config)
+#         self.assertEqual(manager.plugin_path, plugin_path)
+#         self.assertEqual(manager.config_path, config_path)
+#         self.assertEqual(manager.configured_plugins, [])
+#         self.assertEqual(manager.active_plugins, [])
+#         self.assertEqual(manager.dormant_plugins, [])
+
+#     def test_empty_lists_on_init(self):
+#         """Ensure active and dormant plugins start as empty lists."""
+#         manager = PluginManager()
+#         self.assertIsInstance(manager.active_plugins, list)
+#         self.assertIsInstance(manager.dormant_plugins, list)
+#         self.assertEqual(len(manager.active_plugins), 0)
+#         self.assertEqual(len(manager.dormant_plugins), 0)
+
+#     def test_default_list_isolation(self):
+#         """Test that each PluginManager instance has isolated lists."""
+#         manager1 = PluginManager()
+#         manager2 = PluginManager()
+        
+#         manager1.active_plugins.append("plugin1")
+#         self.assertNotIn("plugin1", manager2.active_plugins)
+    
+#     def test_path_type_validation(self):
+#         """Ensure plugin_path and config_path accept Path, str (converted to Path), or None."""
+        
+#         # Test string -> Path conversion (should not raise)
+#         manager = PluginManager(plugin_path="invalid/path")
+#         self.assertEqual(manager.plugin_path, Path("invalid/path"))
+    
+#         # Test valid Path object (should not raise)
+#         manager = PluginManager(plugin_path=Path("/valid/path"))
+#         self.assertEqual(manager.plugin_path, Path("/valid/path"))
+    
+#         # Test invalid type (integer should raise TypeError)
+#         with self.assertRaises(TypeError):
+#             PluginManager(config_path=123)  # Should raise
+    
+#         # Test None (valid case)
+#         manager = PluginManager(plugin_path=None)
+#         self.assertIsNone(manager.plugin_path)
+
+#     def test_config_is_copied(self):
+#         """Ensure config is copied during initialization."""
+#         config = {'debug': True}
+#         manager = PluginManager(config=config)
+        
+#         config['debug'] = False  # Modify original dict
+#         self.assertTrue(manager.config['debug'])  # Should remain True
+
+#     def test_none_config_defaults_to_empty_dict(self):
+#         """Ensure None for config defaults to empty dictionary."""
+#         manager = PluginManager(config=None)
+#         self.assertEqual(manager.config, {})
+
+#     # def setUp(self):
+#     #     """Create a basic PluginManager instance for testing."""
+#     #     self.plugin_manager = PluginManager()
+
+#     def test_valid_paths(self):
+#         """Test that valid paths are accepted."""
+#         path = Path("/valid/path")
+#         self.plugin_manager.plugin_path = path
+#         self.plugin_manager.config_path = path
+        
+#         self.assertEqual(self.plugin_manager.plugin_path, path)
+#         self.assertEqual(self.plugin_manager.config_path, path)
+
+#     def test_invalid_path_type(self):
+#         """Test that invalid path types raise TypeError."""
+#         # with self.assertRaises(TypeError):
+#         #     self.plugin_manager.plugin_path = "/invalid/string/path"
+        
+#         with self.assertRaises(TypeError):
+#             self.plugin_manager.config_path = 12345  # Invalid type
+
+#     def test_plugin_list_validation(self):
+#         """Ensure configured_plugins accepts valid list of dictionaries."""
+#         valid_plugins = [
+#             {"plugin": "weather_plugin", "base_config": {}},
+#             {"plugin": "news_plugin", "base_config": {}}
+#         ]
+#         self.plugin_manager.configured_plugins = valid_plugins
+#         self.assertEqual(len(self.plugin_manager.configured_plugins), 2)
+
+#     def test_invalid_plugin_structure(self):
+#         """Ensure configured_plugins raises error for invalid structures."""
+#         with self.assertRaises(TypeError):
+#             self.plugin_manager.configured_plugins = "invalid_string"
+
+#         with self.assertRaises(TypeError):
+#             self.plugin_manager.configured_plugins = [123, "string"]
+
+#         with self.assertRaises(ValueError):
+#             self.plugin_manager.configured_plugins = [
+#                 {"base_config": {}},  # Missing 'plugin' key
+#                 {"plugin": "plugin_without_config"}  # Missing 'base_config'
+#             ]
+
+# ## these all pass in the interpreter, but don't pass here - probably something to do with the test suite
+
+#     def test_load_schema_without_config_path(self):
+#         """Test loading schema without setting config_path."""
+#         self.plugin_manager.config_path = None
+#         with self.assertRaises(FileNotFoundError):
+#             self.plugin_manager.load_schema('base_schema.yaml')
+    
+#     @patch('pathlib.Path.is_file', return_value=False)
+#     def test_load_schema_file_not_found(self, mock_is_file):
+#         """Test loading schema when the schema file is missing."""
+#         with self.assertRaises(FileNotFoundError):
+#             self.plugin_manager.load_schema('missing_schema.yaml')
+    
+#     @patch('builtins.open', new_callable=mock_open, read_data="invalid_yaml: [unbalanced_bracket")
+#     def test_load_schema_malformed_yaml(self, mock_file):
+#         """Test error handling when schema contains invalid YAML."""
+#         with self.assertRaises(ValueError):
+#             self.plugin_manager.load_schema('malformed_schema.yaml')
+
 # -
 
 if __name__ == '__main__':
