@@ -20,6 +20,7 @@ from pathlib import Path
 import logging
 import yaml
 from typing import Optional, Dict, List
+from uuid import uuid4
 
 
 # -
@@ -52,6 +53,7 @@ def validate_path(func):
     return wrapper
 
 
+# +
 class PluginManager:
     """
     Manages loading, configuration, and lifecycle of plugins.
@@ -60,13 +62,21 @@ class PluginManager:
     stored in a YAML file, if `base_schema_file` is provided. It also supports
     caching schema files to avoid repeated disk reads.
     """
-
+    ACTIVE = 'active'
+    DORMANT = 'dormant'
+    LOAD_FAILED = 'load_failed'
+    CONFIG_FAILED = 'config_failed',
+    CRASHED = 'crashed'
+    PENDING = 'pending_validation'   
+    
     def __init__(
         self,
-        config: Optional[dict] = None,
         plugin_path: Optional[Path] = None,
         config_path: Optional[Path] = None,
+        config: Optional[dict] = None,
         base_schema_file: Optional[str] = None,
+        plugin_schema_file: Optional[str] = None,
+        plugin_param_filename: Optional[str] = 'plugin_param_schema.yaml',
         max_plugin_failures: int = 5,
     ):
         """
@@ -79,20 +89,22 @@ class PluginManager:
             base_schema_file (str or None): Filename of the base schema for validating `self.config`.
             max_plugin_failures (int): Consecutive plugin failures allowed before disabling a plugin.
         """
-        # Internal cache for previously loaded schemas
-        self._schema_cache: Dict[str, dict] = {}
-
-        # Store schema filename (may be None if no base schema is used)
-        self.base_schema_file = base_schema_file
-
         # Use property setters for path validations
         self.plugin_path = plugin_path
         self.config_path = config_path
-
+        
+        # Internal cache for previously loaded schemas
+        self._schema_cache: Dict[str, dict] = {}
+        
         # Prepare data structures
         self.configured_plugins: List[dict] = []
         self.active_plugins: List[dict] = []
-        self.dormant_plugins: List[dict] = []
+        self.dormant_plugins: List[dict] = []        
+
+        # Store schema filename (may be None if no base schema is used)
+        self.base_schema_file = base_schema_file
+        self.plugin_schema_file = plugin_schema_file
+        self.plugin_param_filename = plugin_param_filename
 
         # maximum number of times a plugin can fail before being deactivated
         self.max_plugin_failures = max_plugin_failures
@@ -110,49 +122,50 @@ class PluginManager:
     # ----------------------------------------------------------------------
     #                        SCHEMA LOADING
     # ----------------------------------------------------------------------
-    def load_schema(self, schema_file: str) -> dict:
+    def load_schema(self, schema_file: str, cache: bool = True) -> dict:
         """
-        Load and cache a YAML schema file from `config_path` or from disk.
-
+        Load and optionally cache a YAML schema file from `config_path` or from disk.
+    
         Args:
             schema_file (str): The filename (or path) to the schema YAML.
-
+            cache (bool): Whether to check and store the schema in the cache. Defaults to True.
+    
         Returns:
             dict: Parsed schema data.
-
+    
         Raises:
-            FileNotFoundError: If `config_path` is None or the file is not found.
+            FileNotFoundError: If the file is not found.
             ValueError: If the file is not valid YAML or is not a dict.
         """
-        # Check if we have a cached copy
-        if schema_file in self._schema_cache:
-            logger.debug(f"Using cached schema for '{schema_file}'.")
-            return self._schema_cache[schema_file]
-
-        if not self.config_path:
-            # If config_path is missing, we can't construct a valid path
-            raise FileNotFoundError("Configuration path is not set. Cannot load schemas.")
-
-        # Construct the file path
-        schema_path = self.config_path / schema_file
+        # Ensure schema_file is a Path object
+        schema_path = Path(schema_file).resolve()
+    
+        # If caching is enabled, check for cached copy
+        if cache and schema_path in self._schema_cache:
+            logger.debug(f"Using cached schema for '{schema_path}'.")
+            return self._schema_cache[schema_path]
+    
+        # Ensure the schema file exists
         if not schema_path.is_file():
             raise FileNotFoundError(f"Schema file not found: {schema_path}")
-
+    
         # Load and parse the YAML
         try:
             with open(schema_path, "r") as f:
                 data = yaml.safe_load(f)
         except yaml.YAMLError as e:
-            raise ValueError(f"Failed to parse YAML for '{schema_file}': {e}")
-
+            raise ValueError(f"Failed to parse YAML for '{schema_path}': {e}")
+    
         if not isinstance(data, dict):
-            raise ValueError(f"Schema '{schema_file}' is not a valid dictionary.")
-
-        # Cache and return
-        self._schema_cache[schema_file] = data
-        logger.info(f"Schema '{schema_file}' loaded successfully.")
+            raise ValueError(f"Schema '{schema_path}' is not a valid dictionary.")
+    
+        # Cache the schema only if caching is enabled
+        if cache:
+            self._schema_cache[schema_path] = data
+            logger.info(f"Schema '{schema_path}' cached successfully.")
+    
+        logger.info(f"Schema '{schema_path}' loaded successfully.")
         return data
-
         
     def validate_config(self, config: dict, schema: dict) -> dict:
         """
@@ -262,7 +275,7 @@ class PluginManager:
             logger.debug("No base schema. Using config as-is.")
     
     # ----------------------------------------------------------------------
-    #                PATH PROPERTIES (plugin_path, config_path)
+    # PATHS and FILES
     # ----------------------------------------------------------------------
     @property
     def plugin_path(self) -> Optional[Path]:
@@ -296,31 +309,50 @@ class PluginManager:
         self._config_path = value
         logger.debug(f"config_path set to {value}")
 
-    
     @property
-    def configured_plugins(self):
-        return self._configured_plugins
-    
-    @configured_plugins.setter
-    def configured_plugins(self, plugins):
-        if not plugins:
-            self._configured_plugins = []
+    def base_schema_file(self):
+        return self._base_schema_file
+
+    @base_schema_file.setter
+    def base_schema_file(self, value):
+        self._base_schema_file = value
+
+        if not value or not self.config_path:
             return
-        if not isinstance(plugins, list):
-            logger.error("configured_plugins must be a list.")
-            raise TypeError("configured_plugins must be a list of dictionaries.")
+
+        schema_path = Path(self.config_path) / value
+        if not schema_path.is_file():
+            raise FileNotFoundError(f"Base schema file '{value}' does not exist at {schema_path}")
+
+        self._base_schema_file = schema_path
+
+    @property
+    def plugin_schema_file(self):
+        return self._plugin_schema_file
+    
+    @plugin_schema_file.setter
+    def plugin_schema_file(self, value):
+        # Store the raw value initially
+        self._plugin_schema_file = value
         
-        for plugin in plugins:
-            if not isinstance(plugin, dict):
-                logger.error("Invalid plugin format. Must be a dictionary.")
-                raise TypeError("Each plugin must be a dictionary.")
-            
-            if 'plugin' not in plugin or 'base_config' not in plugin:
-                logger.error("Missing 'plugin' or 'base_config' keys in plugin.")
-                raise ValueError("Each plugin must have 'plugin' and 'base_config' keys.")
+        # If no value or config_path is None, skip the path check
+        if not value or not self.config_path:
+            return
         
-        logger.debug(f"{len(plugins)} plugins configured successfully.")
-        self._configured_plugins = plugins
+        schema_path = Path(self.config_path) / value
+    
+        # --- Check cache before file existence ---
+        if value in self._schema_cache or schema_path in self._schema_cache:
+            logger.debug(f"Using cached schema for '{schema_path}'. Skipping file check.")
+            self._plugin_schema_file = schema_path
+            return
+        
+        # Perform file existence check only if not cached
+        if not schema_path.is_file():
+            raise FileNotFoundError(f"Plugin schema file '{value}' does not exist at {schema_path}")
+    
+        # Store the fully resolved path
+        self._plugin_schema_file = schema_path
 
     # ----------------------------------------------------------------------
     #               PLUGIN LISTS AND THEIR SETTERS
@@ -333,7 +365,7 @@ class PluginManager:
         
             {
                 'plugin': <plugin_name_str>,
-                'base_config': {...}
+                'plugin_config': {...}
                 ...
             }
 
@@ -373,7 +405,77 @@ class PluginManager:
 
         logger.debug(f"Storing {len(plugins)} plugin configuration(s).")
         self._configured_plugins = plugins        
+
+    def add_plugin(self, plugin_config: dict):
+        """
+        Add a plugin configuration to the list of configured plugins.
     
+        Args:
+            plugin_config (dict): The plugin configuration to validate and add.
+    
+        Raises:
+            ValueError: If the plugin configuration does not conform to the schema.
+            FileNotFoundError: If the plugin schema file is missing.
+        """
+        if not self.plugin_schema_file:
+            raise FileNotFoundError("Plugin schema is required, but is not set")
+
+        plugin_id = plugin_config.get('plugin', None)
+        plugin_status = {'status': self.PENDING, 'reason': 'Pending validation'}
+
+        if not plugin_id:
+            raise ValueError(f"Plugin configuration does not contain a valid plugin identifier")
+        
+        # base plugin schema
+        plugin_schema = self.load_schema(self.plugin_schema_file)
+
+        # add try around this and label as CONFIG_FAILED
+        # validate plugin_config
+        validated_plugin_config = self.validate_config(plugin_config.get('plugin_config', {}), plugin_schema)
+
+        try:
+            plugin_param_schema_file = self.plugin_path / plugin_id / self.plugin_param_filename
+            plugin_param_schema = self.load_schema(plugin_param_schema_file, False)
+        except FileNotFoundError:
+            logger.debug('This plugin does not support additional paramaters')
+            plugin_param_schema = {}
+
+        plugin_params = plugin_config.get('plugin_params', {})
+
+        if plugin_params and not plugin_param_schema:
+            logger.warning(f"Supplied parameters cannot be validated due to missing paramater schema file for plugin {plugin_id}")
+            logger.warning(f"Contact the developer if paramaters are required and request a {self.plugin_param_filename}")
+
+        # add try here? or maybe in the load_config and mark the plugin as CONFIG_FAILED
+        # validate plugin_params
+        validated_plugin_params = self.validate_config(plugin_params, plugin_param_schema)
+        
+     
+        if validated_plugin_config.get('dormant', False):
+            plugin_status['status'] = self.DORMANT
+        else:
+            plugin_status['status'] = self.ACTIVE
+
+        plugin_status['reason'] = 'Configuration validated'            
+
+        plugin_uuid = str(uuid4())[:8]
+        
+        # add uuid if configured successfully and append
+        final_config = {
+            'plugin_config': validated_plugin_config,
+            'plugin_params': validated_plugin_params,
+            'uuid': plugin_uuid,
+            'plugin_status': plugin_status
+        }
+        
+        self.configured_plugins.append(final_config)
+
+        
+        
+        logger.info(f"Plugin {plugin_id} UUID: {plugin_uuid}  added successfully")
+        
+        
+# -
 
     # # ----- VALIDATION -----
     # def load_schema(self, schema_file: str) -> dict:
@@ -450,6 +552,8 @@ class PluginManager:
         
     #     logger.info("Configuration validated successfully.")
     #     return validated_config
+
+
 
 # +
 # def validate_path(func):
