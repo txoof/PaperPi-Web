@@ -15,184 +15,287 @@
 # %load_ext autoreload
 # %autoreload 2
 
+# +
 from pathlib import Path
 import logging
 import yaml
-from functools import lru_cache
+from typing import Optional, Dict, List
 
+
+# -
 
 logger = logging.getLogger(__name__)
 
 
 def validate_path(func):
     """
-    Decorator to validate and convert path-like properties.
-    
-    This decorator ensures that a given path is either:
-      - A `Path` object
-      - A `str` that can be converted to a `Path` object
-      - `None` (allowed for unset paths)
-    
-    If the path is invalid (e.g., an integer or unsupported type), a `TypeError` is raised.
-    
-    Additionally, the decorator logs the validation process, including:
-      - Conversion of strings to `Path` objects
-      - Error messages for invalid types
-      - Successful validation of paths
-    
-    Args:
-        func (function): The setter method for the path property to be validated.
-    
-    Returns:
-        function: A wrapped function that validates and sets the path.
-    
-    Raises:
-        TypeError: If the provided path is not a `Path`, `str`, or `None`.
-    
-    Example:
-        @property
-        def plugin_path(self):
-            return self._plugin_path
-    
-        @plugin_path.setter
-        @validate_path
-        def plugin_path(self, path):
-            self._plugin_path = path
-    """    
-    def wrapper(self, path):
+    Decorator to validate that the path is either a Path-like or None.
+    Converts str -> Path if needed.
+    Raises TypeError if invalid.
+    """
+    def wrapper(self, value):
         path_name = func.__name__
-        logger.debug(f"Validating {path_name}: {path} ({type(path)})")
-        
-        if path is None:
-            logger.debug(f"{path_name} set to None")
-            return func(self, None)
-        
-        if isinstance(path, str):
-            logger.debug(f"Converting {path_name} to Path.")
-            path = Path(path)
-
-        if isinstance(path, Path):
-            logger.debug(f"{path_name} is valid: {path}")
-            return func(self, path)
-        
-        message = f"Invalid type for {path_name}. Must be Path, str, or None."
-        logger.error(message)
-        raise TypeError(message)
-    
+        logger.debug(f"Validating {path_name}: {value} ({type(value)})")        
+        if value is None:
+            # Path can remain None (valid usage).
+            return func(self, value)
+        if isinstance(value, str):
+            # Convert string to a Path
+            value = Path(value)
+        if not isinstance(value, Path):
+            # If it's neither None nor Path, raise
+            raise TypeError(
+                f"{func.__name__} must be a Path object, string, or None. "
+                f"Got '{type(value).__name__}'."
+            )
+        return func(self, value)
     return wrapper
 
 
 class PluginManager:
     """
     Manages loading, configuration, and lifecycle of plugins.
+    
+    This class can optionally validate its own `config` against a base schema,
+    stored in a YAML file, if `base_schema_file` is provided. It also supports
+    caching schema files to avoid repeated disk reads.
     """
 
     def __init__(
-            self,
-            config: dict = {},
-            plugin_path: Path = None,
-            config_path: Path = None,
-            base_schema_file: str = None,
-            plugin_schema_file: str = None,
-            max_plugin_failures: int = 5,        
-                ):
+        self,
+        config: Optional[dict] = None,
+        plugin_path: Optional[Path] = None,
+        config_path: Optional[Path] = None,
+        base_schema_file: Optional[str] = None,
+        max_plugin_failures: int = 5,
+    ):
         """
-        Initialize the PluginManager with empty configurations and paths.
+        Initialize the PluginManager with optional config, paths, and a base schema.
+
+        Args:
+            config (dict, optional): Base configuration for the manager. If None, an empty dict is used.
+            plugin_path (Path or None): Directory containing plugin subdirectories.
+            config_path (Path or None): Directory containing YAML schema files (and possibly other configs).
+            base_schema_file (str or None): Filename of the base schema for validating `self.config`.
+            max_plugin_failures (int): Consecutive plugin failures allowed before disabling a plugin.
         """
+        # Internal cache for previously loaded schemas
+        self._schema_cache: Dict[str, dict] = {}
+
+        # Store schema filename (may be None if no base schema is used)
         self.base_schema_file = base_schema_file
-        self.config = config.copy() if config else {}
+
+        # Use property setters for path validations
         self.plugin_path = plugin_path
         self.config_path = config_path
-        self.configured_plugins = []
-        self.active_plugins = []
-        self.dormant_plugins = []
-        self._schema_cache = {}
-        # self.main_schema_file = main_schema_file
-        # self.plugin_schema_file = plugin_schema_file
-        # self._main_schema = None
-        # self._plugin_schema = None
-        # self.max_plugin_failures = max_plugin_failures
-        # self.plugin_failures = {}
-        # self.foreground_plugin = None
+
+        # Prepare data structures
+        self.configured_plugins: List[dict] = []
+        self.active_plugins: List[dict] = []
+        self.dormant_plugins: List[dict] = []
+
+        # maximum number of times a plugin can fail before being deactivated
+        self.max_plugin_failures = max_plugin_failures
+
+        # If no config given, store an empty dict and defer validation.
+        if config is None:
+            logger.debug("No initial config provided. Using empty dictionary.")
+            self._config = {}
+        else:
+            # Triggers the config.setter
+            self.config = config.copy()
+
         logger.info("PluginManager initialized.")
         
-    # ----- SCHEMA LOADING -----
+    # ----------------------------------------------------------------------
+    #                        SCHEMA LOADING
+    # ----------------------------------------------------------------------
     def load_schema(self, schema_file: str) -> dict:
-        """Load schema from the config path or plugin directory."""
+        """
+        Load and cache a YAML schema file from `config_path` or from disk.
+
+        Args:
+            schema_file (str): The filename (or path) to the schema YAML.
+
+        Returns:
+            dict: Parsed schema data.
+
+        Raises:
+            FileNotFoundError: If `config_path` is None or the file is not found.
+            ValueError: If the file is not valid YAML or is not a dict.
+        """
+        # Check if we have a cached copy
+        if schema_file in self._schema_cache:
+            logger.debug(f"Using cached schema for '{schema_file}'.")
+            return self._schema_cache[schema_file]
+
         if not self.config_path:
-            raise FileNotFoundError("Configuration path is not set.")
-        
+            # If config_path is missing, we can't construct a valid path
+            raise FileNotFoundError("Configuration path is not set. Cannot load schemas.")
+
+        # Construct the file path
         schema_path = self.config_path / schema_file
         if not schema_path.is_file():
             raise FileNotFoundError(f"Schema file not found: {schema_path}")
-        
-        with open(schema_path, 'r') as file:
-            schema = yaml.safe_load(file)
-        
-        logger.info(f"Loaded schema from {schema_path}")
-        return schema
 
-    # ----- CONFIG VALIDATION -----
+        # Load and parse the YAML
+        try:
+            with open(schema_path, "r") as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Failed to parse YAML for '{schema_file}': {e}")
+
+        if not isinstance(data, dict):
+            raise ValueError(f"Schema '{schema_file}' is not a valid dictionary.")
+
+        # Cache and return
+        self._schema_cache[schema_file] = data
+        logger.info(f"Schema '{schema_file}' loaded successfully.")
+        return data
+
+        
     def validate_config(self, config: dict, schema: dict) -> dict:
         """
-        Validate a configuration dictionary against a schema.
+        Validate `config` against a dict-based schema, returning a new dict 
+        that merges defaults and logs warnings for errors.
 
         Args:
-            config (dict): The configuration to validate.
-            schema (dict): The schema to validate against.
+            config (dict): The configuration to be validated.
+            schema (dict): Schema describing expected keys, types, and allowed values.
 
         Returns:
-            dict: Validated configuration with defaults applied.
+            dict: A *merged* config with defaults applied.
+
+        Raises:
+            ValueError: If validation fails for any required or type mismatch.
         """
         validated_config = {}
         errors = []
 
         for key, rules in schema.items():
+            # Gather helpful info from the schema
+            default_val = rules.get('default')
+            required = rules.get('required', False)
+            allowed = rules.get('allowed')
+            # Convert string type to actual Python type
+            try:
+                expected_type = eval(rules.get('type', 'str'))
+            except NameError:
+                logger.warning(f"Unknown type in schema for '{key}'. Using 'str'.")
+                expected_type = str
+
             if key not in config:
-                if rules.get('required', False):
-                    errors.append(f"{key} is required but missing. Default: {rules.get('default')}")
-                validated_config[key] = rules.get('default')
-            else:
-                value = config[key]
-                expected_type = eval(rules['type'])
-                
-                if not isinstance(value, expected_type):
-                    errors.append(f"{key} must be of type {expected_type}, got {type(value).__name__}")
-                    validated_config[key] = rules.get('default')
-                else:
-                    validated_config[key] = value
+                # Missing key in user's config
+                if required:
+                    errors.append(
+                        f"{key} is required but missing. Default: {default_val}"
+                    )
+                validated_config[key] = default_val
+                continue
 
-                if 'allowed' in rules and value not in rules['allowed']:
-                    errors.append(f"{key} must be one of {rules['allowed']}, got {value}")
-                    validated_config[key] = rules.get('default')
+            # Key is present
+            value = config[key]
+            if not isinstance(value, expected_type):
+                errors.append(
+                    f"{key} must be of type {expected_type}, got {type(value).__name__}."
+                )
+                validated_config[key] = default_val
+                continue
 
+            # Check allowed values
+            if allowed and value not in allowed:
+                errors.append(
+                    f"{key} must be one of {allowed}, got {value}."
+                )
+                validated_config[key] = default_val
+                continue
+
+            # If everything is good, store it
+            validated_config[key] = value
+
+        # Possibly allow extra keys that aren't in the schema, just log them
+        for extra_key in config.keys() - schema.keys():
+            logger.debug(f"Extra key '{extra_key}' in config not in schema. Keeping as-is.")
+            validated_config[extra_key] = config[extra_key]
+
+        # If any errors occurred, raise collectively
         if errors:
-            for error in errors:
-                logger.warning(error)
+            for e in errors:
+                logger.warning(e)
             raise ValueError("Configuration validation failed. Check logs for details.")
-        
+
         logger.info("Configuration validated successfully.")
         return validated_config
 
-    
-    # ----- CONFIGURATION -----    
+    # ----------------------------------------------------------------------
+    #                        CONFIG PROPERTIES
+    # ----------------------------------------------------------------------
     @property
-    def plugin_path(self):
-        return self._plugin_path
+    def config(self) -> dict:
+        """
+        Access the manager's config dictionary (already validated if base_schema_file was provided).
+        """
+        return self._config
+
+    @config.setter
+    def config(self, value: dict):
+        """
+        Set (and possibly validate) the manager's base config.
+
+        If `base_schema_file` is defined, load and validate. Otherwise, store as-is.
+        """
+        if not isinstance(value, dict):
+            raise TypeError("Config must be a dictionary.")
+
+        if self.base_schema_file:
+            try:
+                schema = self.load_schema(self.base_schema_file)
+                merged = self.validate_config(value, schema)
+                self._config = merged
+                logger.info("Manager config validated and applied.")
+            except Exception as e:
+                logger.error(f"Manager config validation failed: {e}")
+                raise
+        else:
+            # No schema? Just store
+            self._config = value
+            logger.debug("No base schema. Using config as-is.")
+    
+    # ----------------------------------------------------------------------
+    #                PATH PROPERTIES (plugin_path, config_path)
+    # ----------------------------------------------------------------------
+    @property
+    def plugin_path(self) -> Optional[Path]:
+        """
+        Directory containing plugin subdirectories.
+
+        Returns:
+            Path or None
+        """
+        return getattr(self, "_plugin_path", None)
 
     @plugin_path.setter
     @validate_path
-    def plugin_path(self, path):
-        self._plugin_path = path
+    def plugin_path(self, value):
+        self._plugin_path = value
+        logger.debug(f"plugin_path set to {value}")
 
     @property
-    def config_path(self):
-        return self._config_path
+    def config_path(self) -> Optional[Path]:
+        """
+        Directory containing the YAML schema files and other configurations.
+
+        Returns:
+            Path or None
+        """
+        return getattr(self, "_config_path", None)
 
     @config_path.setter
     @validate_path
-    def config_path(self, path):
-        self._config_path = path
+    def config_path(self, value):
+        self._config_path = value
+        logger.debug(f"config_path set to {value}")
+
     
     @property
     def configured_plugins(self):
@@ -219,105 +322,192 @@ class PluginManager:
         logger.debug(f"{len(plugins)} plugins configured successfully.")
         self._configured_plugins = plugins
 
+    # ----------------------------------------------------------------------
+    #               PLUGIN LISTS AND THEIR SETTERS
+    # ----------------------------------------------------------------------
     @property
-    def config(self):
-        return self._config
-
-    @config.setter
-    def config(self, value):
-        if not value:
-            logging.debug('Deferring configuration...')
-            self._config = value
-            return
-        if not isinstance(value, dict):
-            raise TypeError("Config must be a dictionary.")
-        
-        if self.base_schema_file:
-            schema = self.load_schema(self.base_schema_file)
-            try:
-                self._config = self.validate_config(value, schema)
-                logger.info("Configuration validated and applied.")
-            except ValueError as e:
-                logger.error(f"Config validation failed: {e}")
-                raise
-        else:
-            self._config = value
-    
-    # ----- VALIDATION -----
-    def load_schema(self, schema_file: str) -> dict:
+    def configured_plugins(self) -> List[dict]:
         """
-        Load and cache schema files for reuse.
-
-        Args:
-            schema_file (str): The schema file to load.
+        A list of plugin configurations that have been set. Each entry is expected
+        to contain at least:
+        
+            {
+                'plugin': <plugin_name_str>,
+                'base_config': {...}
+                ...
+            }
 
         Returns:
-            dict: Parsed schema dictionary.
+            list of dicts: The user-defined plugin config structures.
+        """
+        return self._configured_plugins
+
+    @configured_plugins.setter
+    def configured_plugins(self, plugins: List[dict]):
+        """
+        Set or replace the entire list of plugin configuration entries.
+        Performs minimal validation that each entry is a dict with
+        'plugin' and 'base_config'.
 
         Raises:
-            FileNotFoundError: If the schema file does not exist.
-            ValueError: If the schema cannot be parsed.
+            TypeError: If `plugins` is not a list of dicts.
+            ValueError: If any plugin dict is missing required keys.
         """
-        # Check cache first
-        if schema_file in self._schema_cache:
-            logger.debug(f"Schema '{schema_file}' loaded from cache.")
-            return self._schema_cache[schema_file]
+        if not plugins:
+            logger.debug("No plugin configurations provided. Clearing list.")
+            self._configured_plugins = []
+            return
 
-        # Construct schema path
-        schema_path = self.config_path / schema_file if self.config_path else Path(schema_file)
+        if not isinstance(plugins, list):
+            logger.error("configured_plugins must be a list.")
+            raise TypeError("configured_plugins must be a list of dictionaries.")
 
-        if not schema_path.is_file():
-            raise FileNotFoundError(f"Schema file not found: {schema_path}")
+        for plugin_dict in plugins:
+            if not isinstance(plugin_dict, dict):
+                logger.error("Invalid plugin format. Must be a dictionary.")
+                raise TypeError("Each plugin must be a dictionary.")
 
-        try:
-            with open(schema_path, 'r') as file:
-                schema = yaml.safe_load(file)
-                self._schema_cache[schema_file] = schema  # Cache schema
-                logger.info(f"Schema '{schema_file}' loaded successfully.")
-                return schema
-        except Exception as e:
-            raise ValueError(f"Failed to load schema '{schema_file}': {e}")
+            if 'plugin' not in plugin_dict or 'base_config' not in plugin_dict:
+                logger.error("Missing 'plugin' or 'base_config' in plugin dict.")
+                raise ValueError("Each plugin must have 'plugin' and 'base_config' keys.")
 
-    def validate_config(self, config: dict, schema: dict) -> dict:
-        """
-        Validate a configuration dictionary against a schema.
+        logger.debug(f"Storing {len(plugins)} plugin configuration(s).")
+        self._configured_plugins = plugins        
+    
 
-        Args:
-            config (dict): The configuration to validate.
-            schema (dict): The schema to validate against.
+    # # ----- VALIDATION -----
+    # def load_schema(self, schema_file: str) -> dict:
+    #     """
+    #     Load and cache schema files for reuse.
 
-        Returns:
-            dict: Validated configuration with defaults applied.
-        """
-        validated_config = {}
-        errors = []
+    #     Args:
+    #         schema_file (str): The schema file to load.
 
-        for key, rules in schema.items():
-            if key not in config:
-                if rules.get('required', False):
-                    errors.append(f"{key} is required but missing. Default: {rules.get('default')}")
-                validated_config[key] = rules.get('default')
-            else:
-                value = config[key]
-                expected_type = eval(rules['type'])
+    #     Returns:
+    #         dict: Parsed schema dictionary.
+
+    #     Raises:
+    #         FileNotFoundError: If the schema file does not exist.
+    #         ValueError: If the schema cannot be parsed.
+    #     """
+    #     # Check cache first
+    #     if schema_file in self._schema_cache:
+    #         logger.debug(f"Schema '{schema_file}' loaded from cache.")
+    #         return self._schema_cache[schema_file]
+
+    #     # Construct schema path
+    #     schema_path = self.config_path / schema_file if self.config_path else Path(schema_file)
+
+    #     if not schema_path.is_file():
+    #         raise FileNotFoundError(f"Schema file not found: {schema_path}")
+
+    #     try:
+    #         with open(schema_path, 'r') as file:
+    #             schema = yaml.safe_load(file)
+    #             self._schema_cache[schema_file] = schema  # Cache schema
+    #             logger.info(f"Schema '{schema_file}' loaded successfully.")
+    #             return schema
+    #     except Exception as e:
+    #         raise ValueError(f"Failed to load schema '{schema_file}': {e}")
+
+    # def validate_config(self, config: dict, schema: dict) -> dict:
+    #     """
+    #     Validate a configuration dictionary against a schema.
+
+    #     Args:
+    #         config (dict): The configuration to validate.
+    #         schema (dict): The schema to validate against.
+
+    #     Returns:
+    #         dict: Validated configuration with defaults applied.
+    #     """
+    #     validated_config = {}
+    #     errors = []
+
+    #     for key, rules in schema.items():
+    #         if key not in config:
+    #             if rules.get('required', False):
+    #                 errors.append(f"{key} is required but missing. Default: {rules.get('default')}")
+    #             validated_config[key] = rules.get('default')
+    #         else:
+    #             value = config[key]
+    #             expected_type = eval(rules['type'])
                 
-                if not isinstance(value, expected_type):
-                    errors.append(f"{key} must be of type {expected_type}, got {type(value).__name__}. Default: {rules.get('default')}")
-                    validated_config[key] = rules.get('default')
-                else:
-                    validated_config[key] = value
+    #             if not isinstance(value, expected_type):
+    #                 errors.append(f"{key} must be of type {expected_type}, got {type(value).__name__}. Default: {rules.get('default')}")
+    #                 validated_config[key] = rules.get('default')
+    #             else:
+    #                 validated_config[key] = value
 
-                if 'allowed' in rules and value not in rules['allowed']:
-                    errors.append(f"{key} must be one of {rules['allowed']}, got {value}. Default: {rules.get('default')}")
-                    validated_config[key] = rules.get('default')
+    #             if 'allowed' in rules and value not in rules['allowed']:
+    #                 errors.append(f"{key} must be one of {rules['allowed']}, got {value}. Default: {rules.get('default')}")
+    #                 validated_config[key] = rules.get('default')
 
-        if errors:
-            for error in errors:
-                logger.warning(error)
-            raise ValueError("Configuration validation failed. Check logs for details.")
+    #     if errors:
+    #         for error in errors:
+    #             logger.warning(error)
+    #         raise ValueError("Configuration validation failed. Check logs for details.")
         
-        logger.info("Configuration validated successfully.")
-        return validated_config
+    #     logger.info("Configuration validated successfully.")
+    #     return validated_config
+
+# +
+# def validate_path(func):
+#     """
+#     Decorator to validate and convert path-like properties.
+    
+#     This decorator ensures that a given path is either:
+#       - A `Path` object
+#       - A `str` that can be converted to a `Path` object
+#       - `None` (allowed for unset paths)
+    
+#     If the path is invalid (e.g., an integer or unsupported type), a `TypeError` is raised.
+    
+#     Additionally, the decorator logs the validation process, including:
+#       - Conversion of strings to `Path` objects
+#       - Error messages for invalid types
+#       - Successful validation of paths
+    
+#     Args:
+#         func (function): The setter method for the path property to be validated.
+    
+#     Returns:
+#         function: A wrapped function that validates and sets the path.
+    
+#     Raises:
+#         TypeError: If the provided path is not a `Path`, `str`, or `None`.
+    
+#     Example:
+#         @property
+#         def plugin_path(self):
+#             return self._plugin_path
+    
+#         @plugin_path.setter
+#         @validate_path
+#         def plugin_path(self, path):
+#             self._plugin_path = path
+#     """    
+#     def wrapper(self, path):
+#         path_name = func.__name__
+#         logger.debug(f"Validating {path_name}: {path} ({type(path)})")
+        
+#         if path is None:
+#             logger.debug(f"{path_name} set to None")
+#             return func(self, None)
+        
+#         if isinstance(path, str):
+#             logger.debug(f"Converting {path_name} to Path.")
+#             path = Path(path)
+
+#         if isinstance(path, Path):
+#             logger.debug(f"{path_name} is valid: {path}")
+#             return func(self, path)
+        
+#         message = f"Invalid type for {path_name}. Must be Path, str, or None."
+#         logger.error(message)
+#         raise TypeError(message)
+    
+#     return wrapper
 
 # +
 # from pathlib import Path
