@@ -129,6 +129,31 @@ class TestPluginManagerPathHandling(unittest.TestCase):
         self.assertIsNone(self.manager.plugin_path)
 
 
+class TestPluginManagerSignatures(unittest.TestCase):
+    """Test plugin config signature generation and comparison."""
+
+    def setUp(self):
+        self.manager = PluginManager()
+
+    def test_plugin_config_signature(self):
+        """Ensure plugin_config_signature generates consistent hashes."""
+        plugin_config_1 = {
+            'plugin': 'clock',
+            'refresh_interval': 30,
+            'uuid': '12345'  # Should be ignored in signature
+        }
+        plugin_config_2 = {
+            'plugin': 'clock',
+            'refresh_interval': 30,
+            'uuid': '67890'  # Different uuid, but same config
+        }
+        
+        signature_1 = self.manager.plugin_config_signature(plugin_config_1)
+        signature_2 = self.manager.plugin_config_signature(plugin_config_2)
+        
+        self.assertEqual(signature_1, signature_2)
+
+
 # -------------------------------------------------------------------
 # 3) TEST SCHEMA LOADING (FILE OPERATIONS)
 # -------------------------------------------------------------------
@@ -144,13 +169,13 @@ class TestPluginManagerSchemaLoading(unittest.TestCase):
         self.manager.config_path = None
         with self.assertRaises(FileNotFoundError):
             self.manager.load_schema('base_schema.yaml')
-    
+
     @patch('pathlib.Path.is_file', return_value=False)
     def test_load_schema_file_not_found(self, mock_is_file):
         """Test loading schema when the schema file is missing."""
         with self.assertRaises(FileNotFoundError):
             self.manager.load_schema('missing_schema.yaml')
-    
+
     @patch('builtins.open', new_callable=mock_open, read_data="invalid_yaml: [unbalanced_bracket")
     def test_load_schema_malformed_yaml(self, mock_file):
         """Test error handling when schema contains invalid YAML."""
@@ -159,45 +184,146 @@ class TestPluginManagerSchemaLoading(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.manager.load_schema('malformed_schema.yaml')
 
+    @patch('pathlib.Path.is_file', return_value=True)
+    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({'key': 'value'}))
+    def test_load_schema_with_cache(self, mock_file, mock_is_file):
+        """Test that schema is cached when cache=True (default)."""
+        schema_path = Path('/tmp/base_schema.yaml')
+        self.manager.load_schema(schema_path)  # Default: cache=True
+
+        # Ensure schema is now cached
+        self.assertIn(schema_path.resolve(), self.manager._schema_cache)
+
+    @patch('pathlib.Path.is_file', return_value=True)
+    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({'key': 'value'}))
+    def test_load_schema_no_cache(self, mock_file, mock_is_file):
+        """Test that schema is not cached when cache=False."""
+        schema_path = Path('/tmp/base_schema.yaml')
+        self.manager.load_schema(schema_path, cache=False)
+
+        # Verify schema is NOT cached
+        self.assertNotIn(schema_path.resolve(), self.manager._schema_cache)
+
+    @patch('pathlib.Path.is_file', return_value=True)
+    @patch('builtins.open', new_callable=mock_open, read_data=yaml.dump({'key': 'value'}))
+    def test_load_schema_force_reload(self, mock_file, mock_is_file):
+        """Test forcing schema reload from disk when cache=False, even if it exists in cache."""
+        schema_path = Path('/tmp/base_schema.yaml')
+
+        # Load schema with caching first
+        self.manager.load_schema(schema_path)  # cache=True by default
+
+        # Confirm schema is cached
+        self.assertIn(schema_path.resolve(), self.manager._schema_cache)
+
+        # Force reload (cache=False)
+        with patch.object(self.manager, '_schema_cache', {schema_path.resolve(): {'cached_key': 'cached_value'}}):
+            schema = self.manager.load_schema(schema_path, cache=False)
+
+        # Ensure the schema loaded from disk (not cache)
+        self.assertEqual(schema, {'key': 'value'})
+
+
+class TestPluginManagerPluginSchema(unittest.TestCase):
+    """Tests to validate plugin schema file interaction."""
+
+    @patch("pathlib.Path.is_file", return_value=True)
+    def setUp(self, mock_is_file):
+        self.mock_plugin_schema = {
+            'refresh_rate': {'type': 'int', 'default': 60},
+            'enabled': {'type': 'bool', 'default': True}
+        }
+
+        # Mock load_schema for plugin schema validation
+        self.load_schema_patcher = patch.object(
+            PluginManager,
+            'load_schema',
+            return_value=self.mock_plugin_schema
+        )
+        self.mock_load_schema = self.load_schema_patcher.start()
+
+        self.manager = PluginManager(
+            config_path=Path('/tmp'),
+            plugin_schema_file='plugin_schema.yaml'
+        )
+
+    def tearDown(self):
+        self.load_schema_patcher.stop()
+
+    @patch("pathlib.Path.is_file", return_value=False)
+    def test_plugin_schema_file_not_found(self, mock_is_file):
+        """Test that plugin_schema_file raises FileNotFoundError if file is missing."""
+        with self.assertRaises(FileNotFoundError):
+            self.manager.plugin_schema_file = 'missing_plugin_schema.yaml'
+
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_plugin_schema_file_sets_correctly(self, mock_is_file):
+        """Test that plugin_schema_file resolves correctly when the file exists."""
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+        expected_path = Path('/tmp/plugin_schema.yaml')
+        self.assertEqual(self.manager.plugin_schema_file, expected_path)
+
+    @patch("pathlib.Path.is_file", return_value=False)
+    def test_plugin_schema_no_config_path(self, mock_is_file):
+        """Ensure no error is raised if config_path is None when setting plugin_schema_file."""
+        self.manager.config_path = None
+        # No FileNotFoundError should be raised because config_path is None
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+        self.assertEqual(self.manager.plugin_schema_file, 'plugin_schema.yaml')
+
+    def test_plugin_schema_loads_from_cache(self):
+        """Ensure plugin schema loads from cache if already present."""
+        # Inject a schema into _schema_cache to simulate prior load
+        cached_schema = {
+            'refresh_rate': {'type': 'int', 'default': 30}
+        }
+        self.manager._schema_cache['plugin_schema.yaml'] = cached_schema
+
+        # Re-assign the same schema file => should load from cache
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+
+        # Load schema should not be triggered; it uses the cached version
+        self.mock_load_schema.assert_not_called()
+
+    @patch("pathlib.Path.is_file", return_value=True)
+    def test_plugin_schema_overwrites(self, mock_is_file):
+        """Ensure setting plugin_schema_file overwrites the previous value."""
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+        self.assertEqual(self.manager.plugin_schema_file, Path('/tmp/plugin_schema.yaml'))
+
+        # Overwrite with a new schema
+        self.manager.plugin_schema_file = 'new_plugin_schema.yaml'
+        self.assertEqual(self.manager.plugin_schema_file, Path('/tmp/new_plugin_schema.yaml'))
 
 
 # -------------------------------------------------------------------
 # 4) TEST CONFIG VALIDATION & SCHEMA INTERACTION
 # -------------------------------------------------------------------
 class TestPluginManagerConfigValidation(unittest.TestCase):
-    """Focus on config property setter, default application, and validation."""
 
-    def setUp(self):
-        # Create a patcher to mock load_schema, returning a schema dict
-        self.mock_schema = {
-            'screen_mode': {
-                'type': 'str',
-                'default': '1',
-                'allowed': ['1', 'L', 'RGB'],
-                'required': True
-            },
-            'resolution': {
-                'type': 'tuple',
-                'default': (800, 480),
-            },
-            'cache_expire': {
-                'type': 'int',
-                'default': 2
-            }
+    @patch("pathlib.Path.is_file", return_value=True)
+    def setUp(self, mock_is_file):
+        # Now is_file() always returns True, so the property setter won't raise.
+        self.mock_base_schema = {
+            'screen_mode': {'type': 'str', 'default': '1', 'allowed': ['1', 'L', 'RGB'], 'required': True},
+            'resolution': {'type': 'tuple', 'default': (800, 480)},
+            'cache_expire': {'type': 'int', 'default': 2},
         }
+
+        # Mock load_schema to return self.mock_base_schema
         self.load_schema_patcher = patch.object(
             PluginManager,
             'load_schema',
-            return_value=self.mock_schema
+            return_value=self.mock_base_schema
         )
         self.mock_load_schema = self.load_schema_patcher.start()
 
-        # Provide an initial config that partially overrides the defaults
         self.initial_config = {
             'screen_mode': 'L',
             'resolution': (600, 400),
             'cache_expire': 5
         }
+
         self.manager = PluginManager(
             config=self.initial_config,
             base_schema_file='base_schema.yaml',
@@ -234,7 +360,7 @@ class TestPluginManagerConfigValidation(unittest.TestCase):
 
     def test_missing_required_config(self):
         """Ensure missing required config raises an error."""
-        # Suppose 'screen_mode' is required in self.mock_schema
+        # Suppose 'screen_mode' is required in self.mock_base_schema
         # We'll remove it from the new config:
         incomplete_config = {'cache_expire': 10}  # Missing 'screen_mode'
         
@@ -265,9 +391,13 @@ class TestPluginManagerConfigValidation(unittest.TestCase):
         self.assertEqual(self.manager.config['cache_expire'], 10)
 
 
+# +
 # -------------------------------------------------------------------
 # 5) TEST PLUGIN MANAGEMENT (CONFIGURED PLUGINS)
 # -------------------------------------------------------------------
+
+# this needs attention - structure will change
+
 class TestPluginManagerPlugins(unittest.TestCase):
     """Focus on setting configured_plugins and verifying structure."""
 
@@ -306,6 +436,170 @@ class TestPluginManagerPlugins(unittest.TestCase):
         self.assertEqual(len(self.manager.configured_plugins), 0)
 
 
+# -
+
+class TestPluginManagerSchemaInteraction(unittest.TestCase):
+    """Test interaction with plugin schema and param schema files."""
+
+    def setUp(self):
+        self.manager = PluginManager(plugin_path=Path("/plugins"))
+        
+        # Set plugin_schema_file to avoid FileNotFoundError
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+        
+        # Mock load_schema to return a base schema
+        self.mock_base_schema = {
+            'refresh_interval': {'type': 'int', 'default': 10}
+        }
+        patcher = patch.object(self.manager, 'load_schema', return_value=self.mock_base_schema)
+        self.mock_load_schema = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_plugin_param_filename(self):
+        """Ensure plugin_param_filename is used correctly for per-plugin schema."""
+        plugin_config = {
+            'plugin': 'weather',
+            'plugin_params': {'units': 'metric'}
+        }
+        
+        # Mock param schema file check to simulate a missing file
+        with patch('pathlib.Path.is_file', return_value=False):
+            self.manager.plugin_param_filename = 'custom_param_schema.yaml'
+            
+            # Test that add_plugin proceeds without param schema file
+            self.manager.add_plugin(plugin_config)
+            
+            # Assert that the param filename is correctly set
+            self.assertEqual(self.manager.plugin_param_filename, 'custom_param_schema.yaml')
+
+
+class TestPluginManagerAddPlugin(unittest.TestCase):
+    """Test add_plugin method for duplicate detection, schema validation, and forced adds."""
+
+    def setUp(self):
+        self.manager = PluginManager(plugin_path=Path("/plugins"))
+        
+        # Set plugin_schema_file to bypass initial FileNotFoundError
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+        self.manager.plugin_param_filename = 'plugin_param_schema.yaml'
+
+        # Base schema for validation
+        self.mock_base_schema = {
+            'refresh_interval': {'type': 'int', 'default': 10}
+        }
+        
+        # Mock load_schema to return a base schema
+        patcher = patch.object(self.manager, 'load_schema', return_value=self.mock_base_schema)
+        self.mock_load_schema = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_add_plugin_success(self):
+        """Ensure plugin is successfully added when schema exists."""
+        plugin_config = {
+            'plugin': 'clock',
+            'plugin_config': {'refresh_interval': 30}
+        }
+        
+        self.manager.add_plugin(plugin_config)
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+        self.assertEqual(self.manager.configured_plugins[0]['plugin'], 'clock')
+
+    def test_add_plugin_avoids_duplicates(self):
+        """Ensure identical plugins are skipped unless forced."""
+        plugin_config = {
+            'plugin': 'clock',
+            'plugin_config': {'refresh_interval': 30}
+        }
+        
+        # Add first instance
+        self.manager.add_plugin(plugin_config)
+        initial_count = len(self.manager.configured_plugins)
+        
+        # Attempt to add identical plugin (should skip)
+        self.manager.add_plugin(plugin_config)
+        self.assertEqual(initial_count, len(self.manager.configured_plugins))
+        
+        # Force add duplicate
+        self.manager.add_plugin(plugin_config, force_duplicate=True)
+        self.assertEqual(initial_count + 1, len(self.manager.configured_plugins))
+
+    def test_plugin_signature_uniqueness(self):
+        """Ensure signature changes for different plugin configurations."""
+        plugin1 = {
+            'plugin': 'clock',
+            'plugin_config': {'refresh_interval': 30}
+        }
+        
+        plugin2 = {
+            'plugin': 'clock',
+            'plugin_config': {'refresh_interval': 60}
+        }
+        
+        signature1 = self.manager.plugin_config_signature(plugin1)
+        signature2 = self.manager.plugin_config_signature(plugin2)
+        
+        self.assertNotEqual(signature1, signature2)
+
+    def test_add_plugin_missing_param_schema(self):
+        """Ensure adding plugin works if param schema is missing."""
+        plugin_config = {
+            'plugin': 'weather',
+            'plugin_params': {'units': 'metric'}
+        }
+        
+        # Patch is_file to simulate missing param schema
+        with patch('pathlib.Path.is_file', return_value=False):
+            self.manager.add_plugin(plugin_config)
+            
+            # Verify the plugin was added despite missing param schema
+            self.assertEqual(len(self.manager.configured_plugins), 1)
+            
+            # Assert plugin is correctly added and params are stored
+            self.assertEqual(self.manager.configured_plugins[0]['plugin'], 'weather')
+            self.assertEqual(self.manager.configured_plugins[0]['plugin_params']['units'], 'metric')
+
+    def test_add_plugin_fails_without_base_schema(self):
+        """Ensure add_plugin fails if plugin_schema_file is not set."""
+        self.manager.plugin_schema_file = None
+        
+        plugin_config = {
+            'plugin': 'clock',
+            'plugin_config': {'refresh_interval': 30}
+        }
+        
+        with self.assertRaises(FileNotFoundError):
+            self.manager.add_plugin(plugin_config)
+
+    def test_add_plugin_invalid_config(self):
+        """Ensure add_plugin fails for invalid plugin config."""
+        plugin_config = {
+            'plugin': 'clock',
+            'plugin_config': {'refresh_interval': 'invalid_string'}  # Should be int
+        }
+        
+        with self.assertRaises(ValueError):
+            self.manager.add_plugin(plugin_config)
+
+    def test_param_schema_success(self):
+        """Ensure plugin param schema is used if available."""
+        plugin_config = {
+            'plugin': 'clock',
+            'plugin_params': {'color': 'blue'}
+        }
+        
+        # Mock per-plugin schema to validate params
+        mock_param_schema = {
+            'color': {'type': 'str', 'allowed': ['blue', 'red']}
+        }
+        
+        with patch.object(self.manager, 'load_schema', return_value=mock_param_schema):
+            self.manager.add_plugin(plugin_config)
+            self.assertEqual(len(self.manager.configured_plugins), 1)
+            self.assertEqual(self.manager.configured_plugins[0]['plugin_params']['color'], 'blue')
+
+
+unittest.main(argv=[''], verbosity=2, exit=False)
+
 # +
 # 1) Create a test loader
 loader = unittest.TestLoader()
@@ -317,13 +611,11 @@ suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerPathHandling))
 suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerSchemaLoading))
 suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerConfigValidation))
 suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerPlugins))
+suite.addTests(loader.loadTestsFromTestCase(TestPluginManagerPluginSchema))
 
 # 3) Run the tests
 runner = unittest.TextTestRunner(verbosity=2)
 result = runner.run(suite)
-# -
-
-unittest.main(argv=[''], verbosity=2, exit=False)
 
 # +
 # unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(TestBasePluginInitialization))
