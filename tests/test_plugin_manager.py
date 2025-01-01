@@ -17,7 +17,7 @@
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch, mock_open
+from unittest.mock import patch, mock_open, MagicMock
 import logging
 import yaml
 
@@ -596,6 +596,177 @@ class TestPluginManagerAddPlugin(unittest.TestCase):
             self.manager.add_plugin(plugin_config)
             self.assertEqual(len(self.manager.configured_plugins), 1)
             self.assertEqual(self.manager.configured_plugins[0]['plugin_params']['color'], 'blue')
+
+
+class TestPluginManagerAddMultiplePlugins(unittest.TestCase):
+    """Test add_plugins method for handling multiple plugin configurations."""
+
+    def setUp(self):
+        self.manager = PluginManager(plugin_path=Path("/plugins"))
+
+        # Set plugin_schema_file to bypass initial schema check
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+
+        # Mock base schema for validating plugin configs
+        self.mock_base_schema = {
+            'refresh_interval': {'type': 'int', 'default': 10},
+            'dormant': {'type': 'bool', 'default': False}
+        }
+        
+        patcher = patch.object(self.manager, 'load_schema', return_value=self.mock_base_schema)
+        self.mock_load_schema = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_add_multiple_plugins_success(self):
+        """Ensure multiple plugins are added successfully."""
+        plugin_configs = [
+            {'plugin': 'clock', 'plugin_config': {'refresh_interval': 30}},
+            {'plugin': 'weather', 'plugin_config': {'units': 'metric'}}
+        ]
+        
+        result = self.manager.add_plugins(plugin_configs)
+        
+        self.assertEqual(result['added'], 2)
+        self.assertEqual(len(self.manager.configured_plugins), 2)
+
+    def test_duplicate_plugin_skipped(self):
+        """Ensure duplicate plugins are skipped unless forced."""
+        plugin_configs = [
+            {'plugin': 'clock', 'plugin_config': {'refresh_interval': 30}},
+            {'plugin': 'clock', 'plugin_config': {'refresh_interval': 30}}
+        ]
+        
+        result = self.manager.add_plugins(plugin_configs)
+        
+        self.assertEqual(result['added'], 1)
+        self.assertEqual(result['failed'], 0)
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+
+    def test_force_duplicate_plugin(self):
+        """Ensure forcing duplicates works."""
+        plugin_configs = [
+            {'plugin': 'clock', 'plugin_config': {'refresh_interval': 30}},
+            {'plugin': 'clock', 'plugin_config': {'refresh_interval': 30}}
+        ]
+        
+        result = self.manager.add_plugins(plugin_configs, force_duplicate=True)
+        
+        self.assertEqual(result['added'], 2)
+        self.assertEqual(len(self.manager.configured_plugins), 2)
+
+
+
+    def test_plugin_validation_failure(self):
+        """Ensure plugin with invalid config is marked as failed."""
+        plugin_configs = [{'plugin': 'weather', 'plugin_config': {'refresh_interval': 'invalid'}}]
+        
+        # Simulate validation failure
+        with patch.object(self.manager, 'validate_config', side_effect=ValueError("Validation failed")):
+            result = self.manager.add_plugins(plugin_configs)
+        
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(result['failures'][0]['plugin'], 'weather')
+        self.assertIn('Validation failed', result['failures'][0]['reason'])
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+        self.assertEqual(self.manager.configured_plugins[0]['plugin_status']['status'], self.manager.CONFIG_FAILED)
+
+    def test_plugin_missing_identifier(self):
+        """Ensure plugins missing 'plugin' key fail."""
+        plugin_configs = [{'plugin_config': {'refresh_interval': 30}}]
+        
+        result = self.manager.add_plugins(plugin_configs)
+        
+        self.assertEqual(result['failed'], 1)
+        self.assertEqual(result['failures'][0]['plugin'], 'UNKNOWN')
+        self.assertIn("Plugin configuration does not contain a valid", result['failures'][0]['reason'])
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+        self.assertEqual(self.manager.configured_plugins[0]['plugin_status']['status'], self.manager.CONFIG_FAILED)
+
+    def test_add_plugin_with_params_missing_schema(self):
+        """Ensure plugin with params but missing schema does not fail."""
+        plugin_configs = [
+            {'plugin': 'weather', 'plugin_params': {'units': 'metric'}}
+        ]
+
+        with patch('pathlib.Path.is_file', return_value=False):
+            result = self.manager.add_plugins(plugin_configs)
+        
+        self.assertEqual(result['added'], 1)
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+        self.assertEqual(self.manager.configured_plugins[0]['plugin'], 'weather')
+        self.assertEqual(self.manager.configured_plugins[0]['plugin_status']['status'], self.manager.ACTIVE)
+
+
+class TestPluginManagerRemovePlugin(unittest.TestCase):
+    def setUp(self):
+        self.manager = PluginManager(plugin_path=Path("/plugins"))
+        
+        # Set plugin schema file to bypass schema-related errors
+        self.manager.plugin_schema_file = 'plugin_schema.yaml'
+        
+        # Sample plugin configuration to add
+        self.plugin_config = {
+            'plugin': 'clock',
+            'plugin_config': {'refresh_interval': 30}
+        }
+    
+        # Mock schema to bypass validation
+        self.mock_base_schema = {
+            'refresh_interval': {'type': 'int', 'default': 10}
+        }
+        
+        # Patch load_schema to avoid file operations
+        patcher = patch.object(self.manager, 'load_schema', return_value=self.mock_base_schema)
+        self.mock_load_schema = patcher.start()
+        self.addCleanup(patcher.stop)
+    
+        # Add plugin during setup
+        self.plugin = self.manager.add_plugin(self.plugin_config)
+
+    def test_remove_existing_plugin(self):
+        """Ensure plugin is removed by UUID when it exists."""
+        result = self.manager.remove_plugin_config(self.plugin['uuid'])
+        self.assertTrue(result)
+        self.assertEqual(len(self.manager.configured_plugins), 0)
+
+    def test_remove_nonexistent_plugin(self):
+        """Ensure False is returned if UUID is not found."""
+        result = self.manager.remove_plugin_config('nonexistent_uuid')
+        self.assertFalse(result)
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+
+    def test_remove_multiple_plugins(self):
+        """Ensure only the plugin with matching UUID is removed if multiple plugins exist."""
+        second_plugin_config = {
+            'plugin': 'weather',
+            'plugin_config': {'refresh_interval': 60}
+        }
+        second_plugin = self.manager.add_plugin(second_plugin_config)
+
+        result = self.manager.remove_plugin_config(self.plugin['uuid'])
+        self.assertTrue(result)
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+
+        # Ensure the remaining plugin is the second one
+        self.assertEqual(self.manager.configured_plugins[0]['plugin'], 'weather')
+
+    def test_remove_plugin_with_dormant_status(self):
+        """Ensure plugins marked as dormant can also be removed."""
+        dormant_plugin_config = {
+            'plugin': 'calendar',
+            'plugin_config': {'dormant': True}
+        }
+        dormant_plugin = self.manager.add_plugin(dormant_plugin_config)
+
+        result = self.manager.remove_plugin_config(dormant_plugin['uuid'])
+        self.assertTrue(result)
+        self.assertEqual(len(self.manager.configured_plugins), 1)
+
+    def test_remove_plugin_from_empty_list(self):
+        """Ensure False is returned if no plugins are configured."""
+        self.manager.configured_plugins = []
+        result = self.manager.remove_plugin_config(self.plugin['uuid'])
+        self.assertFalse(result)
 
 
 unittest.main(argv=[''], verbosity=2, exit=False)
