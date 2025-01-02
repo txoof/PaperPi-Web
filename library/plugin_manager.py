@@ -134,10 +134,9 @@ class PluginManager:
             self.config = config.copy()
 
         logger.info("PluginManager initialized.")
-        
-    # ----------------------------------------------------------------------
-    #                        SCHEMA LOADING
-    # ----------------------------------------------------------------------
+
+    
+    # SCHEMA LOADING
     def load_schema(self, schema_file: str, cache: bool = True) -> dict:
         """
         Load and optionally cache a YAML schema file from `config_path` or from disk.
@@ -256,9 +255,8 @@ class PluginManager:
         logger.info("Configuration validated successfully.")
         return validated_config
 
-    # ----------------------------------------------------------------------
-    #                        CONFIG PROPERTIES
-    # ----------------------------------------------------------------------
+    
+    # CONFIG PROPERTIES
     @property
     def config(self) -> dict:
         """
@@ -290,9 +288,7 @@ class PluginManager:
             self._config = value
             logger.debug("No base schema. Using config as-is.")
     
-    # ----------------------------------------------------------------------
     # PATHS and FILES
-    # ----------------------------------------------------------------------
     @property
     def plugin_path(self) -> Optional[Path]:
         """
@@ -370,9 +366,7 @@ class PluginManager:
         # Store the fully resolved path
         self._plugin_schema_file = schema_path
 
-    # ----------------------------------------------------------------------
-    # Plugin lists, setters and associated functions
-    # ----------------------------------------------------------------------
+    # PLUGIN LISTS, SETTERS AND ASSOCIATED FUNCTIONS
     @property
     def configured_plugins(self) -> List[dict]:
         """
@@ -604,18 +598,14 @@ class PluginManager:
         return hashlib.md5(cfg_json.encode('utf-8')).hexdigest()
 
     # LOAD PLUGINS
-
     def load_plugins(self) -> None:
         """
-        Instantiate plugins based on self.configured_plugins entries 
-        whose plugin_status is either 'active' or 'dormant'.
-    
-        1. Check each configured plugin's status; skip if not 'active' or 'dormant'.
-        2. Dynamically import the plugin's layout using 'layout_name'.
-        3. Remove any previously loaded plugin with the same UUID (duplicate).
-        4. Instantiate a BasePlugin with the validated/merged config.
-        5. Place the plugin in self.active_plugins or self.dormant_plugins.
-        6. If any error occurs, mark plugin_status as 'failed'.
+        Fresh load all configured active/dormant plugins based on 
+        self.configured_plugins entries.
+        
+        Populate active_plugins and dormant_plugins lists.
+        
+        If any error occurs, mark plugin_status as 'failed'.
     
         Returns:
             None. (Updates internal lists and modifies plugin_status in-place.)
@@ -638,7 +628,12 @@ class PluginManager:
             # Pull out the main plugin config (e.g. 'plugin_config')
             plugin_config = entry.get("plugin_config", {})
             plugin_id = entry.get("plugin", "unknown_plugin")
-            plugin_uuid = plugin_config.get("uuid", None)
+            plugin_uuid = entry.get("uuid", None)
+            plugin_params = entry.get("plugin_params", {})
+
+            # set final config to pass to plugin
+            plugin_config['uuid'] = plugin_uuid
+            plugin_config['config'] = plugin_params
     
             plugin_dir = self.plugin_path / plugin_id
             init_path = plugin_dir / "__init__.py"
@@ -649,7 +644,7 @@ class PluginManager:
                 entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
                 continue
     
-            # 1) Dynamically load the plugin module from the filesystem
+            # Dynamically load the plugin module from the filesystem
             try:
                 spec = importlib.util.spec_from_file_location(plugin_id, str(init_path))
                 module = importlib.util.module_from_spec(spec)
@@ -661,14 +656,24 @@ class PluginManager:
                 entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
                 continue
     
-            # 2) Load the layout from layout.py using layout_name
+            # Load the layout from layout.py using layout_name
             layout_name = plugin_config.get("layout_name")
             if not layout_name:
                 reason = f"Plugin '{plugin_id}' missing 'layout_name'."
                 logger.warning(reason)
                 entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
                 continue
-    
+            
+            try:
+                update_function = getattr(module.plugin, 'update_function')
+            except AttributeError as e:
+                reason = (
+                    f"update_fucnction not found in {plugin_id}/plugin.py: {e}"
+                )
+                logger.warning(reason)
+                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+                continue
+            
             try:
                 layout_obj = getattr(module.layout, layout_name)
                 # Add it to the config dict so it can be passed to BasePlugin via **expand
@@ -687,19 +692,32 @@ class PluginManager:
                 logger.exception(reason)
                 entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
                 continue
+
+            # Handle duplicates by skipping newer plugins with the same UUID
+            # this shouldn't happen
+            duplicate_uuid = False
+            for each in self.active_plugins + self.dormant_plugins:
+                if each.uuid == plugin_uuid:
+                    duplicate_uuid = True
+
+            if duplicate_uuid:
+                logger.warning("Plugin with duplicate UUID already configured. Will not add duplicate.")
+                continue
+                
+            
+            # # Handle duplicates by removing existing instances with the same UUID
+            # if plugin_uuid:
+            #     removed_any = self._remove_plugin_by_uuid(plugin_uuid)
+            #     if removed_any:
+            #         logger.info(
+            #             f"Removed older instance(s) of plugin {plugin_id} (UUID={plugin_uuid})"
+            #         )
     
-            # 3) Handle duplicates by removing existing instances with the same UUID
-            if plugin_uuid:
-                removed_any = self._remove_plugin_by_uuid(plugin_uuid)
-                if removed_any:
-                    logger.info(
-                        f"Removed older instance(s) of plugin {plugin_id} (UUID={plugin_uuid})"
-                    )
-    
-            # 4) Instantiate BasePlugin with the final config
+            # Instantiate BasePlugin with the final config
             try:
                 # Use the entire plugin_config as kwargs
                 plugin_instance = BasePlugin(**plugin_config)
+                plugin_instance.update_function = update_function
             except Exception as e:
                 reason = (
                     f"Error creating BasePlugin for '{plugin_id}' (UUID={plugin_uuid}): {e}"
@@ -708,7 +726,7 @@ class PluginManager:
                 entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
                 continue
     
-            # 5) Place plugin into active or dormant list
+            # Place plugin into active or dormant list
             if plugin_config.get("dormant", False):
                 # It's a dormant plugin
                 self.dormant_plugins.append(plugin_instance)
