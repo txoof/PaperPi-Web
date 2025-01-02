@@ -399,6 +399,7 @@ class BasePlugin():
         """
         elapsed_time = time.monotonic() - self.last_updated
         remaining_time = self.refresh_interval - elapsed_time
+        # remaining_time = elapsed_time - self.refresh_interval
         return max(remaining_time, 0)  # Return 0 if already ready
     
     @property
