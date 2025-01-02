@@ -596,7 +596,8 @@ class PluginManager:
         
         logger.warning(f"No plugin with UUID={uuid} found.")
         return False
-    def activate_plugin_by_uuid(self, uuid: str, status: str, reason: str) -> bool:
+        
+    def activate_plugin_by_uuid(self, uuid: str, status: str, reason = None) -> bool:
         """
         Activate a configured plugin by UUID and set its status as active or dormant
 
@@ -604,13 +605,25 @@ class PluginManager:
             bool: True if successfully activated
         """
         success = False
-        for config in self.configured_plugin:
-            config_uuid = config.get('uuid')
-            
+        if not status in (self.ACTIVE, self.DORMANT):
+            logger.error(f"Valid status values for activated plugins are: {self.ACTIVE, self.DORMANT}")
+            return False
+        
+        if not reason:
+            reason = 'Activated by UUID'
+        
+        for config in self.configured_plugins:
+            config_uuid = config.get('uuid')    
             if config_uuid == uuid:
-                # load plugin here
-                # config['plugin_status']['status_']
-                pass
+                plugin_status = config.get('plugin_status', {})
+                plugin_status['status'] = status
+                plugin_status['reason'] = reason
+                config['plugin_status'] = plugin_status
+                
+                if self.load_plugin(config):
+                    success = True
+        return success
+                
     
     def deactivate_plugin_by_uuid(self, uuid: str, status: str = None, reason: str = None) -> bool:
         """
@@ -627,7 +640,7 @@ class PluginManager:
             status = self.DEACTIVATED
 
         if not reason:
-            status = 'Plugin removed - no reason given'
+            reason = 'Plugin removed - no reason given'
         
         # Search and remove from active plugins
         for i, plugin in enumerate(self.active_plugins):
@@ -690,155 +703,144 @@ class PluginManager:
         cfg_json = json.dumps(cfg, sort_keys=True)
         return hashlib.md5(cfg_json.encode('utf-8')).hexdigest()
 
+    def load_plugin(self, entry: dict) -> Optional[BasePlugin]:
+        """
+        Load a single plugin based on its configuration entry.
+    
+        Args:
+            entry (dict): A single plugin config entry from self.configured_plugins.
+    
+        Returns:
+            BasePlugin or None:
+                - Returns a newly constructed BasePlugin if successful.
+                - Returns None if we skip/ fail. (In that case, the function updates `entry["plugin_status"]`.)
+        """
+        plugin_status_info = entry.get("plugin_status", {})
+        status = plugin_status_info.get("status", "").lower()
+    
+        # Only load if status is 'active' or 'dormant'
+        if status not in (self.ACTIVE, self.DORMANT):
+            logger.debug(f"Skipping plugin '{entry.get('plugin')}' with status='{status}'.")
+            return None
+    
+        plugin_id  = entry.get("plugin", "unknown_plugin")
+        plugin_uuid = entry.get("uuid")
+        # Merge the plugin_params into plugin_config
+        plugin_config = entry.get("plugin_config", {})
+        plugin_params = entry.get("plugin_params", {})
+        plugin_config["uuid"]   = plugin_uuid
+        plugin_config["config"] = plugin_params
+    
+        # Ensure __init__.py exists
+        plugin_dir  = self.plugin_path / plugin_id
+        init_path   = plugin_dir / "__init__.py"
+        if not init_path.is_file():
+            reason = f"Plugin '{plugin_id}' does not contain __init__.py"
+            logger.error(reason)
+            entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+            return None
+    
+        # Dynamically load the plugin module from the filesystem
+        try:
+            spec = importlib.util.spec_from_file_location(plugin_id, str(init_path))
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[plugin_id] = module
+            spec.loader.exec_module(module)
+        except Exception as e:
+            reason = f"Failed to load plugin '{plugin_id}': {e}"
+            logger.exception(reason)
+            entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+            return None
+    
+        # Load the layout
+        layout_name = plugin_config.get("layout_name")
+        if not layout_name:
+            reason = f"Plugin '{plugin_id}' missing 'layout_name'."
+            logger.warning(reason)
+            entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+            return None
+    
+        try:
+            update_function = getattr(module.plugin, "update_function")
+        except AttributeError as e:
+            reason = f"update_function not found in {plugin_id}/plugin.py: {e}"
+            logger.warning(reason)
+            entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+            return None
+    
+        try:
+            layout_obj = getattr(module.layout, layout_name)
+            plugin_config["layout"] = layout_obj
+        except AttributeError as e:
+            reason = f"Layout '{layout_name}' not found in plugin '{plugin_id}': {e}"
+            logger.warning(reason)
+            entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+            return None
+        except Exception as e:
+            reason = f"Unexpected error accessing layout '{layout_name}' in '{plugin_id}': {e}"
+            logger.exception(reason)
+            entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+            return None
+    
+        # Check duplicates
+        for p in self.active_plugins + self.dormant_plugins:
+            if p.uuid == plugin_uuid:
+                logger.warning("Plugin with duplicate UUID already configured. Will not add duplicate.")
+                return None
+    
+        # Attempt to instantiate BasePlugin
+        try:
+            plugin_instance = BasePlugin(**plugin_config)
+            plugin_instance.update_function = update_function
+        except Exception as e:
+            reason = f"Error creating BasePlugin for '{plugin_id}' (UUID={plugin_uuid}): {e}"
+            logger.error(reason)
+            entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
+            return None
+    
+        # Success path: return the constructed plugin
+        return plugin_instance
+
+
     def load_plugins(self) -> None:
         """
         Fresh load all configured active/dormant plugins based on 
         self.configured_plugins entries.
-        
-        Populate active_plugins and dormant_plugins lists.
-        
-        If any error occurs, mark plugin_status as 'failed'.
     
-        Returns:
-            None. (Updates internal lists and modifies plugin_status in-place.)
+        Clears out any existing active/dormant plugin references in
+        self.active_plugins, self.dormant_plugins, and tries to load
+        each plugin via load_plugin().
+    
+        If a plugin is loaded successfully, updates plugin_status in the
+        config entry and places it into the appropriate list.
+        If any failure occurs, plugin_status is updated to 'load_failed'.
         """
-        # Clear out old references (we'll rebuild them)
+        # Clear old references
         self.active_plugins.clear()
         self.dormant_plugins.clear()
     
         for entry in self.configured_plugins:
-            plugin_status_info = entry.get("plugin_status", {})
-            status = plugin_status_info.get("status", "").lower()
-    
-            # Only consider 'active' or 'dormant' statuses
-            if status not in (self.ACTIVE, self.DORMANT):
-                logger.debug(
-                    f"Skipping plugin '{entry.get('plugin')}' with status='{status}'."
-                )
+            # Attempt to load a single plugin
+            plugin_obj = self.load_plugin(entry)
+            if plugin_obj is None:
+                # The method sets plugin_status to LOAD_FAILED if it was needed
                 continue
     
-            # Pull out the main plugin config (e.g. 'plugin_config')
-            plugin_config = entry.get("plugin_config", {})
-            plugin_id = entry.get("plugin", "unknown_plugin")
-            plugin_uuid = entry.get("uuid", None)
-            plugin_params = entry.get("plugin_params", {})
-
-            # set final config to pass to plugin
-            plugin_config['uuid'] = plugin_uuid
-            plugin_config['config'] = plugin_params
-    
-            plugin_dir = self.plugin_path / plugin_id
-            init_path = plugin_dir / "__init__.py"
-    
-            if not init_path.is_file():
-                reason = f"Plugin '{plugin_id}' does not contain __init__.py"
-                logger.error(reason)
-                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
-                continue
-    
-            # Dynamically load the plugin module from the filesystem
-            try:
-                spec = importlib.util.spec_from_file_location(plugin_id, str(init_path))
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[plugin_id] = module
-                spec.loader.exec_module(module)
-            except Exception as e:
-                reason = f"Failed to load plugin '{plugin_id}': {e}"
-                logger.exception(reason)
-                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
-                continue
-    
-            # Load the layout from layout.py using layout_name
-            layout_name = plugin_config.get("layout_name")
-            if not layout_name:
-                reason = f"Plugin '{plugin_id}' missing 'layout_name'."
-                logger.warning(reason)
-                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
-                continue
-            
-            try:
-                update_function = getattr(module.plugin, 'update_function')
-            except AttributeError as e:
-                reason = (
-                    f"update_fucnction not found in {plugin_id}/plugin.py: {e}"
-                )
-                logger.warning(reason)
-                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
-                continue
-            
-            try:
-                layout_obj = getattr(module.layout, layout_name)
-                # Add it to the config dict so it can be passed to BasePlugin via **expand
-                plugin_config["layout"] = layout_obj
-            except AttributeError as e:
-                reason = (
-                    f"Layout '{layout_name}' not found in plugin '{plugin_id}': {e}"
-                )
-                logger.warning(reason)
-                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
-                continue
-            except Exception as e:
-                reason = (
-                    f"Unexpected error accessing layout '{layout_name}' in '{plugin_id}': {e}"
-                )
-                logger.exception(reason)
-                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
-                continue
-
-            # Handle duplicates by skipping newer plugins with the same UUID
-            # this shouldn't happen
-            duplicate_uuid = False
-            for each in self.active_plugins + self.dormant_plugins:
-                if each.uuid == plugin_uuid:
-                    duplicate_uuid = True
-
-            if duplicate_uuid:
-                logger.warning("Plugin with duplicate UUID already configured. Will not add duplicate.")
-                continue
-                
-            
-            # # Handle duplicates by removing existing instances with the same UUID
-            # if plugin_uuid:
-            #     removed_any = self._rxemove_plugin_by_uuid(plugin_uuid)
-            #     if removed_any:
-            #         logger.info(
-            #             f"Removed older instance(s) of plugin {plugin_id} (UUID={plugin_uuid})"
-            #         )
-    
-            # Instantiate BasePlugin with the final config
-            try:
-                # Use the entire plugin_config as kwargs
-                plugin_instance = BasePlugin(**plugin_config)
-                plugin_instance.update_function = update_function
-            except Exception as e:
-                reason = (
-                    f"Error creating BasePlugin for '{plugin_id}' (UUID={plugin_uuid}): {e}"
-                )
-                logger.error(reason)
-                entry["plugin_status"] = {"status": self.LOAD_FAILED, "reason": reason}
-                continue
-    
-            # Place plugin into active or dormant list
-            if plugin_config.get("dormant", False):
-                # It's a dormant plugin
-                self.dormant_plugins.append(plugin_instance)
+            # We have a plugin_obj. Decide if it’s active or dormant
+            if plugin_obj.dormant:
+                self.dormant_plugins.append(plugin_obj)
                 entry["plugin_status"] = {
                     "status": self.DORMANT,
                     "reason": "Loaded as dormant",
                 }
-                logger.info(
-                    f"Loaded dormant plugin '{plugin_id}' (UUID={plugin_uuid})."
-                )
+                logger.info(f"Loaded dormant plugin '{entry.get('plugin')}' (UUID={plugin_obj.uuid}).")
             else:
-                # It's an active plugin
-                self.active_plugins.append(plugin_instance)
+                self.active_plugins.append(plugin_obj)
                 entry["plugin_status"] = {
                     "status": self.ACTIVE,
                     "reason": "Loaded as active",
                 }
-                logger.info(
-                    f"Loaded active plugin '{plugin_id}' (UUID={plugin_uuid})."
-                )
+                logger.info(f"Loaded active plugin '{entry.get('plugin')}' (UUID={plugin_obj.uuid}).")
     
         logger.info(
             f"load_plugins complete: {len(self.active_plugins)} active, "
