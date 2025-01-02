@@ -26,6 +26,7 @@ import hashlib
 # from importlib import import_module, util
 import importlib.util
 import sys
+from time import monotonic
 
 
 
@@ -133,8 +134,21 @@ class PluginManager:
             # Triggers the config.setter
             self.config = config.copy()
 
+        # track the currently displayed plugin and start time
+        self.foreground_plugin: Optional[BasePlugin] = None
+        self.foreground_start_time: float = 0.0
+
+        # index for cycling among active plugins
+        self._active_index: int = 0
+
+        # keep track of consecutive failures per plugin
+        self.plugin_failures: Dict[str, int] = {}
+    
+        
         logger.info("PluginManager initialized.")
 
+
+    
     
     # SCHEMA LOADING
     def load_schema(self, schema_file: str, cache: bool = True) -> dict:
@@ -597,7 +611,7 @@ class PluginManager:
         cfg_json = json.dumps(cfg, sort_keys=True)
         return hashlib.md5(cfg_json.encode('utf-8')).hexdigest()
 
-    # LOAD PLUGINS
+    # PLUGIN LIFE-CYCLE AND UPDATING
     def load_plugins(self) -> None:
         """
         Fresh load all configured active/dormant plugins based on 
@@ -752,6 +766,110 @@ class PluginManager:
             f"load_plugins complete: {len(self.active_plugins)} active, "
             f"{len(self.dormant_plugins)} dormant."
         )
+
+    def _pick_next_active_plugin(self):
+        """Select the next plugin from the active_plugins property in round-robin order"""
+
+        if not self.active_plugins:
+            self.foreground_plugin = None
+            self._active_index = 0
+            return
+
+        # handle out of range indexes by resetting to the 0th
+        if self._active_index >= len(self.active_plugins):
+            self._active_index = 0
+
+        # use the _active_index to choose the next plugin
+        chosen = self.active_plugins[self._active_index]
+        self.foreground_plugin = chosen
+        
+        self.foreground_start_time = monotonic()
+
+        logger.info(f"Foreground plugin set to '{chosen.name}, and will display for {chosen.duration}' seconds")
+
+        # advance the index
+        self._active_index = (self._active_index + 1) % len(self.active_plugins)
+
+
+    def _safe_plugin_update(self, plugin, force=False):
+        """
+        Safely update a plugin, handling exceptions and failure counts.
+
+        Returns:
+            dict: update status of plugin
+        """
+        success = {}
+        uuid = plugin.uuid
+        try:
+            success = plugin.update(force)
+            if success:
+                # reset failure count
+                self.plugin_failures[uuid] = 0 
+                return success
+            else:
+                # Update failed, but no exception
+                self.plugin_failures[uuid] = self.plugin_failures.get(uuid, 0) + 1
+                logger.warning(f"{plugin.name}, uuid: {plugin.uuid} failed to update."
+                               f"consecutive failures={self.plugin_failures[uuid]}")
+        except Exception as e:
+            self.plugin_failure[uuid] = self.plugin_failures.get(uuid, 0) + 1
+            logger.error(f"Exception during {plugin.name}, uuid: {plugin.uuid} update: {e}", exc_info=True)
+
+        # Check failure threshold
+        if self.plugin_failures[uuid] >= self.max_plugin_failures:
+            logger.warning(f"{plugin.name}, uuid: {plugin.uuid} removed after {self.max_plugin_failures} consecutive failures. ")
+            # remove plugin from active list and set status as CRASHED in config
+        return False
+        return success
+
+
+    
+    def update_cycle(self, force_update=False, force_cycle=False) -> None:
+        """
+        Method for updating plugins and foregrounding active plugins
+
+        
+        """
+        # if there is no foreground plugin, pick the next active plugin
+        if not self.foreground_plugin:
+            self._pick_next_active_plugin()
+            if not self.foreground_plugin:
+                logger.debug("No active plugins avaialble to foreground")
+                return
+
+        # attempt to update the foreground plugin
+        if self.foreground_plugin.ready_for_update or force_update:
+            logger.debug(f"Updating foreground plugin: {self.foreground_plugin.name}")
+            success = self._safe_plugin_update(self.foreground_plugin, force_update)
+            if not success:
+                # implement removing or skipping this plugin
+                logger.debug("Foreground plugin update failed. Future logic: remove or skip.")
+        else:
+            logger.debug(f"Plugin {self.foreground_plugin.name} not ready for update; wait {self.foreground_plugin.time_to_refresh} seconds.")
+
+        display_timer = abs(monotonic() - self.foreground_start_time)
+        
+        if display_timer >= self.foreground_plugin.duration or force_cycle:
+            logger.info(f"Display ended for {self.foreground_plugin.name} due to {'forced cycle' if force_cycle else 'elapsed timer'}.")
+            self._pick_next_active_plugin()
+            self._safe_plugin_update(self.foreground_plugin)
+        else:
+            logger.info(f"{self.foreground_plugin.name} displaying for {abs(display_timer - self.foreground_plugin.duration):.2f} more seconds")
+
+
+        # poll dormant plugins; if they become high-priority, foreground
+        for plugin in self.dormant_plugins:
+            if plugin.ready_for_update or force_update:
+                success = self._safe_plugin_update(plugin, force_update)
+                if success and plugin.high_priority:
+                    logger.info(
+                        f"Dormant plugin '{plugin.name}', '{plugin.uuid}' signaled high_priority. "
+                        f"Replacing foreground plugin '{self.foreground_plugin.name}' with '{plugin.name}'"
+                    )
+                    self.foreground_plugin = plugin
+                    self.foreground_start_time = monotonic()
+                    # this will only show the highest priority plugin
+                    break
 
     # # ----- VALIDATION -----
     # def load_schema(self, schema_file: str) -> dict:
