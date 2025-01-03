@@ -880,6 +880,8 @@ class PluginManager:
         """
         success = {}
         uuid = plugin.uuid
+        name = plugin.name
+        logger.debug(f"Safe-updating plugin {name}, UUID: {uuid}")
         try:
             success = plugin.update(force)
             if success:
@@ -899,7 +901,10 @@ class PluginManager:
         if self.plugin_failures[uuid] >= self.max_plugin_failures:
             logger.warning(f"{plugin.name}, uuid: {plugin.uuid} removed after {self.max_plugin_failures} consecutive failures. ")
             # remove plugin from active list and set status as CRASHED in config
-        return False
+            reason = F"Plugin {name}, UUID: {uuid} failed to update {self.max_plugin_failures}"
+            self.deactivate_plugin_by_uuid(uuid, status=self.CRASHED, reason=reason)
+            logger.warning(reason)
+        # return False
         return success
 
     def list_plugins(self):
@@ -928,6 +933,7 @@ class PluginManager:
         return plugin_dict
     
     def update_cycle(self, force_update=False, force_cycle=False) -> None:
+        # this needs work, if the foreground plugin crashes on update, there should be some mechanism to pick another
         """
         Method for updating plugins and foregrounding active plugins
 
@@ -946,9 +952,9 @@ class PluginManager:
             success = self._safe_plugin_update(self.foreground_plugin, force_update)
             if not success:
                 # implement removing or skipping this plugin
-                logger.debug("Foreground plugin update failed. Future logic: remove or skip.")
+                # logger.debug("Foreground plugin update failed. Future logic: remove or skip.")
         else:
-            logger.debug(f"Plugin {self.foreground_plugin.name} not ready for update; wait {self.foreground_plugin.time_to_refresh} seconds.")
+            logger.debug(f"Plugin {self.foreground_plugin.name} not ready for update; wait {self.foreground_plugin.time_to_refresh:.2f} seconds.")
 
         display_timer = abs(monotonic() - self.foreground_start_time)
         
