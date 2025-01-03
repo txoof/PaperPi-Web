@@ -26,7 +26,7 @@ except ImportError:
     logger.info('jupyter development load')
 
 
-def update_function(self):
+def update_function(self, *args, **kwargs):
     '''update function for basic_clock provides system time string in the format HH:MM
     
     Args:
