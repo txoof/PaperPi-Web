@@ -939,20 +939,27 @@ class PluginManager:
 
         
         """
+        update_success = False
         # if there is no foreground plugin, pick the next active plugin
         if not self.foreground_plugin:
             self._pick_next_active_plugin()
+            previous_foreground = self.foreground_plugin
             if not self.foreground_plugin:
                 logger.debug("No active plugins avaialble to foreground")
+                previous_foreground = None
                 return
-
+        else:
+            # the previous foreground to use if everything else fails
+            previous_foreground = self.foreground_plugin
+        
         # attempt to update the foreground plugin
         if self.foreground_plugin.ready_for_update or force_update:
             logger.debug(f"Updating foreground plugin: {self.foreground_plugin.name}")
-            success = self._safe_plugin_update(self.foreground_plugin, force_update)
-            if not success:
-                # implement removing or skipping this plugin
-                # logger.debug("Foreground plugin update failed. Future logic: remove or skip.")
+            update_success = self._safe_plugin_update(self.foreground_plugin, force_update)
+            # if not success:
+            #     pass
+            #     # implement removing or skipping this plugin
+            #     # logger.debug("Foreground plugin update failed. Future logic: remove or skip.")
         else:
             logger.debug(f"Plugin {self.foreground_plugin.name} not ready for update; wait {self.foreground_plugin.time_to_refresh:.2f} seconds.")
 
@@ -969,8 +976,9 @@ class PluginManager:
         # poll dormant plugins; if they become high-priority, foreground
         for plugin in self.dormant_plugins:
             if plugin.ready_for_update or force_update:
-                success = self._safe_plugin_update(plugin, force_update)
-                if success and plugin.high_priority:
+                update_success = self._safe_plugin_update(plugin, force_update)
+                logger.info(update_success)
+                if update_success and plugin.high_priority:
                     logger.info(
                         f"Dormant plugin '{plugin.name}', '{plugin.uuid}' signaled high_priority. "
                         f"Replacing foreground plugin '{self.foreground_plugin.name}' with '{plugin.name}'"
@@ -978,7 +986,13 @@ class PluginManager:
                     self.foreground_plugin = plugin
                     self.foreground_start_time = monotonic()
                     self.foreground_plugin.high_priority = False
-                    # this will only show the highest priority plugin
+                    # this will only show the hfirst high priority plugin
                     break
+                else:
+                    self.foreground_plugin = previous_foreground
+
+        if not update_success:
+            logger.error(f"Plugin updating failed, falling back to previous plugin: {previous_foreground.name}, UUID: {previous_foreground.name}")
+            self.foreground_plugin = previous_foreground
 
 
