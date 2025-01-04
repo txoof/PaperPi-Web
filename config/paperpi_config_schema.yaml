@@ -1,5 +1,9 @@
 # schema file for validating PaperPi configuration
 main:
+    port:
+        type: int
+        default: 2693
+        description: 'Port on which to run the web interface'
     display_type:
         type: str
         default: Unset
