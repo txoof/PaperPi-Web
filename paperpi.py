@@ -30,19 +30,10 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-from constants import (
-    DEFAULT_CONFIG_FILE,
-    SCHEMA_FILE,
-    CONFIG_FILE_DAEMON,
-    CONFIG_FILE_USER,
-    PID_FILE,
-    LOG_FORMAT,
-    DATE_FORMAT,
-    PORT,
-    ENV_PASS,
-)
+import constants
 
-from library.base_plugin import BasePlugin
+# from library.base_plugin import BasePlugin
+from library.plugin_manager import PluginManager
 
 
 # +
@@ -153,6 +144,7 @@ def daemon_loop():
     logger.info("Daemon loop started.")
     while daemon_running:
         logger.info("display update goes here")
+        logger.info('morestuff')
         # In production, you might call a function to update the display here
         time.sleep(5)
     logger.info("Daemon loop stopped.")
@@ -199,118 +191,155 @@ def parse_args():
 ###############################################################################
 # CONFIG LOADING
 ###############################################################################
-def load_yaml(path: Path) -> dict:
+def load_yaml_file(filepath: str) -> dict:
     """
-    Helper to safely load YAML from path
+    Safely load a YAML file and return its contents as a dictionary.
+
+    Args:
+        filepath (str): Path to the YAML file.
+
+    Returns:
+        dict: Parsed contents of the YAML file.
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        ValueError: If the file cannot be parsed or is not a dictionary.
     """
+    path = Path(filepath).resolve()
+
+    if not path.is_file():
+        raise FileNotFoundError(f"YAML file not found: {path}")
+
     try:
-        with path.open("r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        with open(path, 'r') as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Failed to parse YAML file '{path}': {e}")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"YAML file '{path}' does not contain a valid dictionary.")
+
+    logger.info(f"YAML file '{path}' loaded successfully.")
+    return data
+
+
+def load_validate_config(config_file: Path, schema_file: Path, section_key: str = None):
+    """
+    Load and validate a configuration file against a schema.
+
+    Args:
+        config_file (Path): Path to the configuration YAML file.
+        schema_file (Path): Path to the schema YAML file.
+        section_key (str, optional): Key for a specific section of the config to validate.
+
+    Returns:
+        tuple:
+            dict: Parsed and validated configuration (empty if errors occur).
+            dict: Errors categorized into 'fatal', 'recoverable', and 'other'.
+    """
+    def safe_yaml_load(file_path: Path) -> dict:
+        try:
+            return load_yaml_file(file_path)
+        except Exception as e:
+            msg = f"Failed to load {file_path} due error {e}"
+            logger.error(msg)
+            errors.append(msg)
+            return {}
+
+    config = {}
+    errors = []
+
+    logger.info(f"Loading configuration from: {config_file.resolve()}")
+    logger.info(f"Loading schema from: {schema_file.resolve()}")
+
+    schema_dict = safe_yaml_load(schema_file)
+    config_dict = safe_yaml_load(config_file)
+
+    if not schema_dict or not config_dict:
+        msg = "Critical error loading schema or configuration file"
+        logger.error(msg)
+        errors.append(msg)
+        return config, errors
+
+    logger.info("Validating configuration against schema...")
+
+    if section_key:
+        config_section = config_dict.get(section_key)
+        schema_section = schema_dict.get(section_key)
+    else:
+        config_section = config_dict
+        schema_section = schema_dict
+
+    try:
+        config = PluginManager.validate_config(config_section, schema_section)
+        logger.info(f"Configuration validated successfully")
     except Exception as e:
-        logger.error(f"Failed to load YAML from {path}: {e}")
-        return {}
+        msg = f"Validation failed {e}"
+        errors.append(msg)
+        return config, errors
+
+    return config, errors
 
 
-def load_config(daemon_mode: bool = False) -> dict:
+load_validate_config(constants.CONFIG_FILE_USER, constants.APPLICATION_SCHEMA, constants.APPLICATION_SCHEMA_KEY)
+
+
+
+def load_application_config(daemon_mode: bool = False) -> tuple:
     """
-    Load and merge YAML configurations:
-    1. Load default config (baseline).
-    2. Overlay with user/system config if it exists.
+    Load and validate application configuration and merge with default config for
+    missing values
+
+    Args:
+        daemon_mode (bool): Select system config when true, select user config when false
+        
+    Returns:
+        dict: Parsed and validated configuration
     """
-    config = {
-        'main': {}
-    }
-
-    # Load Default Config
-    if DEFAULT_CONFIG_FILE.is_file():
-        logger.info(f"Loading default config from: {DEFAULT_CONFIG_FILE}")
-        config.update(load_yaml(DEFAULT_CONFIG_FILE))
+    config = {}
+    errors = {'fatal': [],
+              'recoverable': [],
+              'other': [],}
+    if daemon_mode:
+        application_config = constants.CONFIG_FILE_DAEMON
     else:
-        logger.warning("Default config not found. Proceeding without defaults.")
+        application_config = constants.CONFIG_FILE_USER
 
+    logger.info(f"Application mode: {'Daemon' if daemon_mode else 'User'}. Loading configuration from {application_config}")
+    try:
+        schema_dict = load_yaml_file(constants.APPLICATION_SCHEMA)
+    except Exception as e:
+        msg = f"Failed to load schema from {constants.APPLICATION_SCHEMA} due to errors: {e}"
+        logger.error(msg)
+        errors['fatal'].append(msg)
+        schema_dict = {}
+        
+    try:
+        config_dict = load_yaml_file(application_config)
+    except Exception as e:
+        msg = f"Failed to load configuraiton from {application_config} due to errors: {e}"
+        logger.error(msg)
+        errors['fatal'].append(msg)
+        config_dict = {}
 
- 
-    # Load User/System Config
-    config_path = CONFIG_FILE_DAEMON if daemon_mode else CONFIG_FILE_USER   
+    logger.info("Validating application configuration against schema")
 
-    if config_path.is_file():
-        logger.info(f"Loading config file from: {config_path}")
-        user_config = load_yaml(config_path)
-        config.update(user_config)
+    # return config_dict, schema_dict
+    if len(errors.get('fatal', 0)) == 0:
+        try:
+            config = PluginManager.validate_config(config_dict.get(constants.APPLICATION_SCHEMA_KEY), 
+                                                             schema_dict.get(constants.APPLICATION_SCHEMA_KEY))
+        except ValueError as e:
+            msg = f"Failed to validate configuration due "
+            validated_config = {}
     else:
-        logger.info(f"No config file found at {config_path}. Using defaults.")
-
-    return config
-
-
-def validate_config(config: dict, schema: dict) -> dict:
-    """Validate and fill in missing config values based on the schema."""
-    validated_config = {}
-
-    for section, section_schema in schema.items():
-        validated_config[section] = {}
-        for key, properties in section_schema.items():
-            expected_type = properties['type']
-            default_value = properties['default']
-            allowed_values = properties.get('allowed', None)
-            value_range = properties.get('range', None)
-            required = properties.get('required', False)
-
-            # Get the value from config or set to default
-            value = config.get(section, {}).get(key, default_value)
-
-            # Type-check and enforce the expected type
-            if not isinstance(value, eval(expected_type)):
-                if required:
-                    raise ValueError(
-                        f"Critical error: Invalid type for {section}.{key}. "
-                        f"Expected {expected_type}, got {type(value).__name__}."
-                    )
-                logger.warning(
-                    f"Invalid type for {section}.{key}. "
-                    f"Expected {expected_type}, got {type(value).__name__}. "
-                    f"Using default: {default_value}"
-                )
-                value = default_value
-
-            # Range validation for int and float
-            if value_range and isinstance(value, (int, float)):
-                min_val, max_val = value_range
-                if not (min_val <= value <= max_val):
-                    if required:
-                        raise ValueError(
-                            f"Critical error: Value for {section}.{key} out of range. "
-                            f"Expected between {min_val} and {max_val}, got {value}."
-                        )
-                    logger.warning(
-                        f"Value for {section}.{key} out of range. "
-                        f"Expected between {min_val} and {max_val}, got {value}. "
-                        f"Using default: {default_value}"
-                    )
-                    value = default_value
-
-            # Allowed values check
-            if allowed_values and value not in allowed_values:
-                if required:
-                    raise ValueError(
-                        f"Critical error: Invalid value for {section}.{key}. "
-                        f"Allowed values: {allowed_values}, got: {value}."
-                    )
-                logger.warning(
-                    f"Invalid value for {section}.{key}. "
-                    f"Allowed values: {allowed_values}, got: {value}. "
-                    f"Using default: {default_value}"
-                )
-                value = default_value
-
-            validated_config[section][key] = value
-
-    return validated_config
+        logger.warning(f"Skipping validation due to previous fatal errors")            
+        
+            
+    return config, errors
 
 
-c = load_config()
-s = load_yaml(SCHEMA_FILE)
-validate_config(c, s)
+def load_plugin_config(daemon_mode: bool = False ) -> tuple:
 
 
 # +
@@ -323,17 +352,78 @@ def main():
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    # Start the daemon loop in a background thread
-    thread = threading.Thread(target=daemon_loop, daemon=True)
-    thread.start()
+    # load applicaiton configuration
+    app_config, errors = load_application_config()
 
-    # Start Flask in the main thread (blocking call)
-    logger.info(f"Starting Flask on port {PORT}...")
-    # In production behind systemd, you might switch to gunicorn or uwsgi; for dev, this is fine.
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    if len(errors.get('fatal'), 0) > 0:
+        logger.error("Fatal errors occured during configuration load:")
+        for e in errors:
+            logger.error(f"{e}")
+            print(e)
 
+    web_port = app_config.get('port', constants.PORT)
+    log_level = app_config.get('log_level', logging.WARNING)
 
+    logger.setLevel(log_level)
+
+    
+    
+    # # Start the daemon loop in a background thread
+    # thread = threading.Thread(target=daemon_loop, daemon=True)
+    # thread.start()
+
+    # # Start Flask in the main thread (blocking call)
+    # logger.info(f"Starting Flask on port {web_port}...")
+    # # In production behind systemd, you might switch to gunicorn or uwsgi; for dev, this is fine.
+    # app.run(host="0.0.0.0", port=PORT, debug=False)
 # -
 
 if __name__ == "__main__":
     main()
+
+
+def load_yaml_file(filepath: str) -> dict:
+    """
+    Safely load a YAML file and return its contents as a dictionary.
+
+    Args:
+        filepath (str): Path to the YAML file.
+
+    Returns:
+        dict: Parsed contents of the YAML file.
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        ValueError: If the file cannot be parsed or is not a dictionary.
+    """
+    path = Path(filepath).expanduser().resolve()
+
+    logger.info(F"Reading yaml file at {path}")
+
+    if not path.is_file():
+        raise FileNotFoundError(f"YAML file not found: {path}")
+
+    try:
+        with open(path, 'r') as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Failed to parse YAML file '{path}': {e}")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"YAML file '{path}' does not contain a valid dictionary.")
+
+    logger.info(f"YAML file '{path}' loaded successfully.")
+    return data
+
+
+s = load_yaml_file('./config/paperpi_config_schema.yaml')
+c = load_yaml_file('~/.config/com.txoof.paperpi/paperpi_config.yaml')
+
+s['main']
+
+c['main']['vcom'] = -1.90
+
+vc = validate_config(c['main'], s['main'])
+vc
+
+
