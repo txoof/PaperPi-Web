@@ -182,6 +182,22 @@ def daemon_loop():
     logger.info("Daemon loop stopped.")
 
 
+# from IPython.display import display, clear_output
+
+# current_image_hash = ''
+# plugin_manager.update_cycle()
+# try:
+#     while True:
+#         if current_image_hash != plugin_manager.foreground_plugin.image_hash:
+#             current_image_hash = plugin_manager.foreground_plugin.image_hash
+#             clear_output(wait=True)        
+#             display(plugin_manager.foreground_plugin.image)
+
+#         time.sleep(5)
+#         plugin_manager.update_cycle()
+# except KeyboardInterrupt:
+#     logger.info("Stopped update loop")    
+
 # +
 ###############################################################################
 # SIGNAL HANDLING
@@ -393,71 +409,85 @@ def load_validate_config(config_file: Path, schema_file: Path, section_key: str 
 
     return config, errors
 
-
 # +
-args = parse_args()
+# args = parse_args()
+
+# if running_under_systemd() or args.daemon:
+#     # configuration file in daemon mode
+#     file_app_config = PATH_DAEMON_CONFIG / FNAME_APPLICATION_CONFIG
+# else:
+#     # configuration in user on-demand mode
+#     file_app_config = PATH_USER_CONFIG / FNAME_APPLICATION_CONFIG
+
+# # apply override from command line
+# if args.config:
+#     file_app_config = Path(args.config)
 
 
-if running_under_systemd() or args.daemon:
-    # configuration file in daemon mode
-    file_app_config = PATH_DAEMON_CONFIG / FNAME_APPLICATION_CONFIG
-else:
-    # configuration in user on-demand mode
-    file_app_config = PATH_USER_CONFIG / FNAME_APPLICATION_CONFIG
+# # get the parent dir of the application configuration file 
+# path_app_config = file_app_config.parent
 
-# apply override from command line
-if args.config:
-    file_app_config = Path(args.config)
-
-
-# get the parent dir of the application configuration file 
-path_app_config = file_app_config.parent
-
-# use the supplied plugin_config_file
-if args.plugin_config:
-    file_plugin_config = Path(args.plugin_config)
-# otherwise use the default
-else:
-    file_plugin_config = path_app_config / FNAME_PLUGIN_CONFIG
+# # use the supplied plugin_config_file
+# if args.plugin_config:
+#     file_plugin_config = Path(args.plugin_config)
+# # otherwise use the default
+# else:
+#     file_plugin_config = path_app_config / FNAME_PLUGIN_CONFIG
 
 
-# validate the application configuration
-app_configuration, errors = load_validate_config(file_app_config, 
-                                                 PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA,
-                                                 KEY_APPLICATION_SCHEMA)
+# # validate the application configuration
+# app_configuration, errors = load_validate_config(file_app_config, 
+#                                                  PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA,
+#                                                  KEY_APPLICATION_SCHEMA)
                                                  
 
-# get the resolution & screenmode from the configured epaper driver
-resolution = (800, 640)
-screen_mode = 'L'
-app_configuration['resolution'] = resolution
-app_configuration['screen_mode'] = screen_mode
+# # get the resolution & screenmode from the configured epaper driver
+# resolution = (800, 640)
+# screen_mode = 'L'
+
+# app_configuration['resolution'] = resolution
+# app_configuration['screen_mode'] = screen_mode
 
 
-# load the plugin configuration; validation will happen in the plugin manager
-plugin_configuration = load_yaml_file(file_plugin_config)
+# # load the plugin configuration; validation will happen in the plugin manager
+# plugin_configuration = load_yaml_file(file_plugin_config)
 
-# build the plugin manager 
-plugin_manager = PluginManager()
-# -
+# # build the plugin manager 
+# plugin_manager = PluginManager()
 
-plugin_manager.plugin_path = PATH_APP_PLUGINS
-plugin_manager.config_path = PATH_APP_CONFIG
-plugin_manager.base_schema_file = FNAME_PLUGIN_MANAGER_SCHEMA
-plugin_manager.plugin_schema_file = FNAME_PLUGIN_SCHEMA
-try:
-    plugin_manager.config = app_configuration
-except ValueError as e:
-    msg = f"Configuration file error: {e}"
-    logger.error(msg)
-    # do something to bail out and stop loading here
+# plugin_manager.plugin_path = PATH_APP_PLUGINS
+# plugin_manager.config_path = PATH_APP_CONFIG
+# plugin_manager.base_schema_file = FNAME_PLUGIN_MANAGER_SCHEMA
+# plugin_manager.plugin_schema_file = FNAME_PLUGIN_SCHEMA
+# try:
+#     plugin_manager.config = app_configuration
+# except ValueError as e:
+#     msg = f"Configuration file error: {e}"
+#     logger.error(msg)
+#     # do something to bail out and stop loading here
+    
+# # add the plugins based on the loaded configurations
+# plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
+# # validate and load the plugins
+# plugin_manager.load_plugins()
 
 
-plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
+# from IPython.display import display, clear_output
 
+# current_image_hash = ''
+# plugin_manager.update_cycle()
+# try:
+#     while True:
+#         if current_image_hash != plugin_manager.foreground_plugin.image_hash:
+#             current_image_hash = plugin_manager.foreground_plugin.image_hash
+#             clear_output(wait=True)        
+#             display(plugin_manager.foreground_plugin.image)
 
-plugin_manager.configured_plugins
-
+#         time.sleep(5)
+#         plugin_manager.update_cycle()
+# except KeyboardInterrupt:
+#     logger.info("Stopped update loop")
+            
 
 # +
 ###############################################################################
@@ -480,10 +510,73 @@ def main():
             logger.error(f"{e}")
             print(e)
 
-    web_port = app_config.get('port', constants.PORT)
+    web_port = app_config.get('port', PORT)
     log_level = app_config.get('log_level', logging.WARNING)
 
-    logger.setLevel(log_level)
+    # logger.setLevel(log_level)
+
+    args = parse_args()
+    
+    if running_under_systemd() or args.daemon:
+        # configuration file in daemon mode
+        file_app_config = PATH_DAEMON_CONFIG / FNAME_APPLICATION_CONFIG
+    else:
+        # configuration in user on-demand mode
+        file_app_config = PATH_USER_CONFIG / FNAME_APPLICATION_CONFIG
+    
+    # apply override from command line
+    if args.config:
+        file_app_config = Path(args.config)
+    
+    
+    # get the parent dir of the application configuration file 
+    path_app_config = file_app_config.parent
+    
+    # use the supplied plugin_config_file
+    if args.plugin_config:
+        file_plugin_config = Path(args.plugin_config)
+    # otherwise use the default
+    else:
+        file_plugin_config = path_app_config / FNAME_PLUGIN_CONFIG
+    
+    
+    # validate the application configuration
+    app_configuration, errors = load_validate_config(file_app_config, 
+                                                     PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA,
+                                                     KEY_APPLICATION_SCHEMA)
+                                                     
+    
+    # get the resolution & screenmode from the configured epaper driver
+    resolution = (800, 640)
+    screen_mode = 'L'
+    
+    app_configuration['resolution'] = resolution
+    app_configuration['screen_mode'] = screen_mode
+    
+    
+    # load the plugin configuration; validation will happen in the plugin manager
+    plugin_configuration = load_yaml_file(file_plugin_config)
+    
+    # build the plugin manager 
+    plugin_manager = PluginManager()
+    
+    plugin_manager.plugin_path = PATH_APP_PLUGINS
+    plugin_manager.config_path = PATH_APP_CONFIG
+    plugin_manager.base_schema_file = FNAME_PLUGIN_MANAGER_SCHEMA
+    plugin_manager.plugin_schema_file = FNAME_PLUGIN_SCHEMA
+    try:
+        plugin_manager.config = app_configuration
+    except ValueError as e:
+        msg = f"Configuration file error: {e}"
+        logger.error(msg)
+        # do something to bail out and stop loading here
+        
+    # add the plugins based on the loaded configurations
+    plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
+    # validate and load the plugins
+    plugin_manager.load_plugins()
+
+
 
     
     
@@ -496,8 +589,6 @@ def main():
     # # In production behind systemd, you might switch to gunicorn or uwsgi; for dev, this is fine.
     # app.run(host="0.0.0.0", port=PORT, debug=False)
 # -
-
-app_configuration[0]
 
 
 
