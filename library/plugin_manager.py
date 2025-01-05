@@ -1024,6 +1024,19 @@ class PluginManager:
                 self.foreground_plugin = self.previous_foreground_plugin
 
         logger.info("Completed plugin update cycle.")
-    
+
+    def clear_cache(self, force: bool = False):
+        """
+        Expire old documents from each plugin's cache based on the schedule for each plugin
+
+        Args:
+            force (bool): When true, remove all cahced documents
+
+        Returns:
+            None
+        """
+        for plugin in self.active_plugins + self.dormant_plugins:
+            logger.info(f"{'Forcing cache clear' if force else 'Expiring old files'} for {plugin.name}...")
+            plugin.clear_cache(all_files=force)
 
 
