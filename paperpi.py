@@ -13,9 +13,7 @@
 #     name: paperpi-web-venv-33529be2c6
 # ---
 
-# +
 # %load_ext autoreload
-
 # %autoreload 2
 # +
 import sys
@@ -30,16 +28,16 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-import constants
+from constants import * 
 
 # from library.base_plugin import BasePlugin
 from library.plugin_manager import PluginManager
 
 
 # +
-###############################################################################
-# LOGGING CONFIGURATION
-###############################################################################
+# ###############################################################################
+# # LOGGING CONFIGURATION
+# ###############################################################################
 
 def running_under_systemd():
     """
@@ -48,32 +46,66 @@ def running_under_systemd():
     """
     return ('INVOCATION_ID' in os.environ) or ('JOURNAL_STREAM' in os.environ)
 
-logger = logging.getLogger("PaperPi")
-logger.setLevel(logging.INFO)
 
-handler = logging.StreamHandler(sys.stdout)
-formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+# # Configure the main logger
+# logger = logging.getLogger("PaperPi")
+# logger.setLevel(logging.INFO)
 
-if running_under_systemd():
-    # Log to the systemd journal so entries appear in 'journalctl -u <service>'
-    try:
-        from systemd.journal import JournalHandler
-        handler = JournalHandler()
-    except ImportError:
-        # If python-systemd is not installed, fallback to console logging
-        handler = logging.StreamHandler()
-else:
-    # If running directly, log to console
-    handler = logging.StreamHandler()
+# # Avoid adding duplicate handlers
+# if not logger.hasHandlers():
+#     handler = logging.StreamHandler(sys.stdout)
+#     formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
+#     handler.setFormatter(formatter)
+#     logger.addHandler(handler)
 
-formatter = logging.Formatter(
-    fmt='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+#     if running_under_systemd():
+#         try:
+#             from systemd.journal import JournalHandler
+#             handler = JournalHandler()
+#         except ImportError:
+#             handler = logging.StreamHandler()
+#     else:
+#         handler = logging.StreamHandler()
+
+#     formatter = logging.Formatter(
+#         fmt='%(asctime)s [%(levelname)s] %(message)s',
+#         datefmt='%Y-%m-%d %H:%M:%S'
+#     )
+#     handler.setFormatter(formatter)
+#     logger.addHandler(handler)
+
+# # Plugin Manager Logger
+# plugin_manager_logger = logging.getLogger("library.plugin_manager")
+# plugin_manager_logger.setLevel(logging.INFO)
+# plugin_manager_logger.propagate = True
+
+# +
+def setup_logging(level=logging.INFO):
+    # Set up the root logger
+    logger = logging.getLogger()
+    logger.setLevel(level)
+
+    # Remove existing handlers to avoid duplicates
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # Create a console handler
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
+    handler.setFormatter(formatter)
+    
+    # Attach the handler to the root logger
+    logger.addHandler(handler)
+
+    # Test logging from the main program
+    logger.info("Logger setup complete. Ready to capture logs.")
+    
+    # Test logging from a simulated library
+    library_logger = logging.getLogger("library.plugin_manager")
+
+    return logger
+
+logger = setup_logging()
 
 # +
 ###############################################################################
@@ -182,10 +214,24 @@ def handle_signal(signum, frame):
 # ARGUMENT PARSING
 ###############################################################################
 def parse_args():
+
+    # detect jupyter's ipykernel_launcher and trim the jupyter args
+    if 'ipykernel_launcher' in sys.argv[0]:
+        argv = sys.argv[3:]
+    else:
+        argv = sys.argv
+        
     parser = argparse.ArgumentParser(description="PaperPi App")
     parser.add_argument("-d", "--daemon", action="store_true",
                         help="Run in daemon mode (use system-wide config)")
-    return parser.parse_args()
+
+    parser.add_argument("-c", "--config", type=str, default=None,
+                         help="Path to application configuration yaml file")
+
+    parser.add_argument("-p", "--plugin_config", type=str, default=None,
+                          help="Path to plugin configuration yaml file")
+    
+    return parser.parse_args(argv)
 
 
 ###############################################################################
@@ -221,6 +267,73 @@ def load_yaml_file(filepath: str) -> dict:
 
     logger.info(f"YAML file '{path}' loaded successfully.")
     return data
+
+
+def load_yaml_file(filepath: str) -> dict:
+    """
+    Safely load a YAML file and return its contents as a dictionary.
+
+    Args:
+        filepath (str): Path to the YAML file.
+
+    Returns:
+        dict: Parsed contents of the YAML file.
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        ValueError: If the file cannot be parsed or is not a dictionary.
+    """
+    path = Path(filepath).expanduser().resolve()
+
+    logger.info(F"Reading yaml file at {path}")
+
+    if not path.is_file():
+        raise FileNotFoundError(f"YAML file not found: {path}")
+
+    try:
+        with open(path, 'r') as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Failed to parse YAML file '{path}': {e}")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"YAML file '{path}' does not contain a valid dictionary.")
+
+    logger.info(f"YAML file '{path}' loaded successfully.")
+    return data
+
+
+def write_yaml_file(filepath: str, data: list) -> bool:
+    """
+    Write a list of dictionaries to a YAML file.
+
+    Args:
+        filepath (str): The path to the YAML file.
+        data (list): List of dictionaries to convert to YAML.
+
+    Returns:
+        bool: True if the file was written successfully, False otherwise.
+
+    Raises:
+        FileNotFoundError: If the parent directory of the filepath does not exist.
+    """
+    filepath = Path(filepath).expanduser().resolve()
+
+    # Check if the parent directory exists
+    if not filepath.parent.exists():
+        raise FileNotFoundError(f"Directory does not exist: {filepath.parent}")
+    
+    try:
+        # Write to file
+        with open(filepath, 'w') as file:
+            yaml.dump(data, file, default_flow_style=False, sort_keys=False)
+        
+        print(f"YAML file successfully written to {filepath}")
+        return True
+    
+    except Exception as e:
+        print(f"Failed to write YAML file: {e}")
+        return False
 
 
 def load_validate_config(config_file: Path, schema_file: Path, section_key: str = None):
@@ -281,65 +394,69 @@ def load_validate_config(config_file: Path, schema_file: Path, section_key: str 
     return config, errors
 
 
-load_validate_config(constants.CONFIG_FILE_USER, constants.APPLICATION_SCHEMA, constants.APPLICATION_SCHEMA_KEY)
+# +
+args = parse_args()
 
 
+if running_under_systemd() or args.daemon:
+    # configuration file in daemon mode
+    file_app_config = PATH_DAEMON_CONFIG / FNAME_APPLICATION_CONFIG
+else:
+    # configuration in user on-demand mode
+    file_app_config = PATH_USER_CONFIG / FNAME_APPLICATION_CONFIG
 
-def load_application_config(daemon_mode: bool = False) -> tuple:
-    """
-    Load and validate application configuration and merge with default config for
-    missing values
-
-    Args:
-        daemon_mode (bool): Select system config when true, select user config when false
-        
-    Returns:
-        dict: Parsed and validated configuration
-    """
-    config = {}
-    errors = {'fatal': [],
-              'recoverable': [],
-              'other': [],}
-    if daemon_mode:
-        application_config = constants.CONFIG_FILE_DAEMON
-    else:
-        application_config = constants.CONFIG_FILE_USER
-
-    logger.info(f"Application mode: {'Daemon' if daemon_mode else 'User'}. Loading configuration from {application_config}")
-    try:
-        schema_dict = load_yaml_file(constants.APPLICATION_SCHEMA)
-    except Exception as e:
-        msg = f"Failed to load schema from {constants.APPLICATION_SCHEMA} due to errors: {e}"
-        logger.error(msg)
-        errors['fatal'].append(msg)
-        schema_dict = {}
-        
-    try:
-        config_dict = load_yaml_file(application_config)
-    except Exception as e:
-        msg = f"Failed to load configuraiton from {application_config} due to errors: {e}"
-        logger.error(msg)
-        errors['fatal'].append(msg)
-        config_dict = {}
-
-    logger.info("Validating application configuration against schema")
-
-    # return config_dict, schema_dict
-    if len(errors.get('fatal', 0)) == 0:
-        try:
-            config = PluginManager.validate_config(config_dict.get(constants.APPLICATION_SCHEMA_KEY), 
-                                                             schema_dict.get(constants.APPLICATION_SCHEMA_KEY))
-        except ValueError as e:
-            msg = f"Failed to validate configuration due "
-            validated_config = {}
-    else:
-        logger.warning(f"Skipping validation due to previous fatal errors")            
-        
-            
-    return config, errors
+# apply override from command line
+if args.config:
+    file_app_config = Path(args.config)
 
 
-def load_plugin_config(daemon_mode: bool = False ) -> tuple:
+# get the parent dir of the application configuration file 
+path_app_config = file_app_config.parent
+
+# use the supplied plugin_config_file
+if args.plugin_config:
+    file_plugin_config = Path(args.plugin_config)
+# otherwise use the default
+else:
+    file_plugin_config = path_app_config / FNAME_PLUGIN_CONFIG
+
+
+# validate the application configuration
+app_configuration, errors = load_validate_config(file_app_config, 
+                                                 PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA,
+                                                 KEY_APPLICATION_SCHEMA)
+                                                 
+
+# get the resolution & screenmode from the configured epaper driver
+resolution = (800, 640)
+screen_mode = 'L'
+app_configuration['resolution'] = resolution
+app_configuration['screen_mode'] = screen_mode
+
+
+# load the plugin configuration; validation will happen in the plugin manager
+plugin_configuration = load_yaml_file(file_plugin_config)
+
+# build the plugin manager 
+plugin_manager = PluginManager()
+# -
+
+plugin_manager.plugin_path = PATH_APP_PLUGINS
+plugin_manager.config_path = PATH_APP_CONFIG
+plugin_manager.base_schema_file = FNAME_PLUGIN_MANAGER_SCHEMA
+plugin_manager.plugin_schema_file = FNAME_PLUGIN_SCHEMA
+try:
+    plugin_manager.config = app_configuration
+except ValueError as e:
+    msg = f"Configuration file error: {e}"
+    logger.error(msg)
+    # do something to bail out and stop loading here
+
+
+plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
+
+
+plugin_manager.configured_plugins
 
 
 # +
@@ -353,7 +470,9 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
 
     # load applicaiton configuration
-    app_config, errors = load_application_config()
+    # app_config, errors = load_application_config()
+
+    
 
     if len(errors.get('fatal'), 0) > 0:
         logger.error("Fatal errors occured during configuration load:")
@@ -378,52 +497,37 @@ def main():
     # app.run(host="0.0.0.0", port=PORT, debug=False)
 # -
 
+app_configuration[0]
+
+
+
+# +
+test_args = [
+             # ('-d', None), 
+             ('-c', '~/.config/com.txoof.paperpi/paperppi.yaml'), 
+             # ('-p', '~/.config/com.txoof.paperpi/plugins_config.yaml')
+            ]
+
+for key, value in test_args:
+    try:
+        idx = sys.argv.index(key)
+        if value is not None:
+            # Check if the next argument exists and update it
+            if idx + 1 < len(sys.argv):
+                sys.argv[idx + 1] = value
+            else:
+                # If no value exists, append it
+                sys.argv.append(value)
+    except ValueError:
+        # If key is not in sys.argv, add it along with the value (if applicable)
+        sys.argv.append(key)
+        if value is not None:
+            sys.argv.append(value)
+        
+print(sys.argv) 
+# -
+
+sys.argv
+
 if __name__ == "__main__":
     main()
-
-
-def load_yaml_file(filepath: str) -> dict:
-    """
-    Safely load a YAML file and return its contents as a dictionary.
-
-    Args:
-        filepath (str): Path to the YAML file.
-
-    Returns:
-        dict: Parsed contents of the YAML file.
-
-    Raises:
-        FileNotFoundError: If the specified file does not exist.
-        ValueError: If the file cannot be parsed or is not a dictionary.
-    """
-    path = Path(filepath).expanduser().resolve()
-
-    logger.info(F"Reading yaml file at {path}")
-
-    if not path.is_file():
-        raise FileNotFoundError(f"YAML file not found: {path}")
-
-    try:
-        with open(path, 'r') as f:
-            data = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise ValueError(f"Failed to parse YAML file '{path}': {e}")
-
-    if not isinstance(data, dict):
-        raise ValueError(f"YAML file '{path}' does not contain a valid dictionary.")
-
-    logger.info(f"YAML file '{path}' loaded successfully.")
-    return data
-
-
-s = load_yaml_file('./config/paperpi_config_schema.yaml')
-c = load_yaml_file('~/.config/com.txoof.paperpi/paperpi_config.yaml')
-
-s['main']
-
-c['main']['vcom'] = -1.90
-
-vc = validate_config(c['main'], s['main'])
-vc
-
-
