@@ -40,6 +40,10 @@ except ImportError:
 #     from exceptions import PluginError, ImageError, PluginTimeoutError, FileError, ConfigurationError
     from base_plugin import BasePlugin
 
+# +
+# print(f"In base_plugin.py, __name__ = {__name__}")
+# -
+
 logger = logging.getLogger(__name__)
 
 
@@ -197,80 +201,6 @@ class PluginManager:
         logger.info(f"Schema '{schema_path}' loaded successfully.")
         return data
 
-    # @staticmethod
-    # def validate_config(config: dict, schema: dict) -> dict:    
-    # # def validate_config(self, config: dict, schema: dict) -> dict:
-    #     """
-    #     Validate `config` against a dict-based schema, returning a new dict 
-    #     that merges defaults and logs warnings for errors.
-
-    #     Args:
-    #         config (dict): The configuration to be validated.
-    #         schema (dict): Schema describing expected keys, types, and allowed values.
-
-    #     Returns:
-    #         dict: A *merged* config with defaults applied.
-
-    #     Raises:
-    #         ValueError: If validation fails for any required or type mismatch.
-    #     """
-    #     validated_config = {}
-    #     errors = []
-
-    #     for key, rules in schema.items():
-    #         # Gather helpful info from the schema
-    #         default_val = rules.get('default')
-    #         required = rules.get('required', False)
-    #         allowed = rules.get('allowed')
-    #         # Convert string type to actual Python type
-    #         try:
-    #             expected_type = eval(rules.get('type', 'str'))
-    #         except NameError:
-    #             logger.warning(f"Unknown type in schema for '{key}'. Using 'str'.")
-    #             expected_type = str
-
-    #         if key not in config:
-    #             # Missing key in user's config
-    #             if required:
-    #                 errors.append(
-    #                     f"{key} is required but missing. Default: {default_val}"
-    #                 )
-    #             validated_config[key] = default_val
-    #             continue
-
-    #         # Key is present
-    #         value = config[key]
-    #         if not isinstance(value, expected_type):
-    #             errors.append(
-    #                 f"{key} must be of type {expected_type}, got {type(value).__name__}."
-    #             )
-    #             validated_config[key] = default_val
-    #             continue
-
-    #         # Check allowed values
-    #         if allowed and value not in allowed:
-    #             errors.append(
-    #                 f"{key} must be one of {allowed}, got {value}."
-    #             )
-    #             validated_config[key] = default_val
-    #             continue
-
-    #         # If everything is good, store it
-    #         validated_config[key] = value
-
-    #     # Possibly allow extra keys that aren't in the schema, just log them
-    #     for extra_key in config.keys() - schema.keys():
-    #         logger.debug(f"Extra key '{extra_key}' in config not in schema. Keeping as-is.")
-    #         validated_config[extra_key] = config[extra_key]
-
-    #     # If any errors occurred, raise collectively
-    #     if errors:
-    #         for e in errors:
-    #             logger.warning(e)
-    #         raise ValueError("Configuration validation failed. Check logs for details.")
-
-    #     logger.info("Configuration validated successfully.")
-    #     return validated_config
     @staticmethod
     def validate_config(config: dict, schema: dict) -> dict:
         """
@@ -309,7 +239,7 @@ class PluginManager:
             if key not in config:
                 if required:
                     errors.append(
-                        f"{key} is required but missing. Applying default: {default_val}."
+                        f"'{key}' configuration key is required, but missing. Reasonable value: {default_val}. Description: {description}"
                     )
                 validated_config[key] = default_val
                 continue
@@ -320,7 +250,7 @@ class PluginManager:
             # Type validation
             if not isinstance(value, expected_type):
                 errors.append(
-                    f"{key} must be of type {expected_type}, got {type(value).__name__}."
+                    f"'{key}' must be of type {expected_type}, got {type(value).__name__}."
                 )
                 validated_config[key] = default_val
                 continue
@@ -328,7 +258,7 @@ class PluginManager:
             # Allowed value validation
             if allowed and value not in allowed:
                 errors.append(
-                    f"{key} must be one of {allowed}, got {value}."
+                    f"'{key}' must be one of {allowed}, got {value}."
                 )
                 validated_config[key] = default_val
                 continue
@@ -338,7 +268,7 @@ class PluginManager:
                 min_val, max_val = value_range
                 if not (min_val <= value <= max_val):
                     errors.append(
-                        f"{key} must be within the range {value_range}, got {value}."
+                        f"'{key}' must be within the range {value_range}, got {value}."
                     )
                     validated_config[key] = default_val
                     continue
@@ -355,7 +285,7 @@ class PluginManager:
         if errors:
             for e in errors:
                 logger.warning(e)
-            raise ValueError("Configuration validation failed. Check logs for details.")
+            raise ValueError(f"Plugin manager configuration validation failed: {e}")
     
         logger.info("Configuration validated successfully.")
         return validated_config    
@@ -621,7 +551,7 @@ class PluginManager:
             'failures': [],
             'duplicate_config': [],           
         }
-    
+        logger.info(f"Processing {len(plugin_configs)} provided plugins.")
         for plugin_config in plugin_configs:
             plugin_id = plugin_config.get('plugin', 'UNKNOWN')
             try:
