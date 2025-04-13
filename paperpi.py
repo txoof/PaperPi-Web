@@ -23,7 +23,6 @@ import threading
 import time
 import signal
 import os
-import yaml
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -31,6 +30,7 @@ from flask import Flask, jsonify, request
 from constants import * 
 
 # from library.base_plugin import BasePlugin
+from library.config_utils import validate_config, load_yaml_file, write_yaml_file
 from library.plugin_manager import PluginManager
 
 
@@ -250,244 +250,12 @@ def parse_args():
     return parser.parse_args(argv)
 
 
-###############################################################################
-# CONFIG LOADING
-###############################################################################
-def load_yaml_file(filepath: str) -> dict:
-    """
-    Safely load a YAML file and return its contents as a dictionary.
+def cleanup(msg: str = None):
+    if msg:
+        print(msg)
 
-    Args:
-        filepath (str): Path to the YAML file.
+    sys.exit(0)
 
-    Returns:
-        dict: Parsed contents of the YAML file.
-
-    Raises:
-        FileNotFoundError: If the specified file does not exist.
-        ValueError: If the file cannot be parsed or is not a dictionary.
-    """
-    path = Path(filepath).resolve()
-
-    if not path.is_file():
-        raise FileNotFoundError(f"YAML file not found: {path}")
-
-    try:
-        with open(path, 'r') as f:
-            data = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise ValueError(f"Failed to parse YAML file '{path}': {e}")
-
-    if not isinstance(data, dict):
-        raise ValueError(f"YAML file '{path}' does not contain a valid dictionary.")
-
-    logger.info(f"YAML file '{path}' loaded successfully.")
-    return data
-
-
-def load_yaml_file(filepath: str) -> dict:
-    """
-    Safely load a YAML file and return its contents as a dictionary.
-
-    Args:
-        filepath (str): Path to the YAML file.
-
-    Returns:
-        dict: Parsed contents of the YAML file.
-
-    Raises:
-        FileNotFoundError: If the specified file does not exist.
-        ValueError: If the file cannot be parsed or is not a dictionary.
-    """
-    path = Path(filepath).expanduser().resolve()
-
-    logger.info(F"Reading yaml file at {path}")
-
-    if not path.is_file():
-        raise FileNotFoundError(f"YAML file not found: {path}")
-
-    try:
-        with open(path, 'r') as f:
-            data = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise ValueError(f"Failed to parse YAML file '{path}': {e}")
-
-    if not isinstance(data, dict):
-        raise ValueError(f"YAML file '{path}' does not contain a valid dictionary.")
-
-    logger.info(f"YAML file '{path}' loaded successfully.")
-    return data
-
-
-def write_yaml_file(filepath: str, data: list) -> bool:
-    """
-    Write a list of dictionaries to a YAML file.
-
-    Args:
-        filepath (str): The path to the YAML file.
-        data (list): List of dictionaries to convert to YAML.
-
-    Returns:
-        bool: True if the file was written successfully, False otherwise.
-
-    Raises:
-        FileNotFoundError: If the parent directory of the filepath does not exist.
-    """
-    filepath = Path(filepath).expanduser().resolve()
-
-    # Check if the parent directory exists
-    if not filepath.parent.exists():
-        raise FileNotFoundError(f"Directory does not exist: {filepath.parent}")
-    
-    try:
-        # Write to file
-        with open(filepath, 'w') as file:
-            yaml.dump(data, file, default_flow_style=False, sort_keys=False)
-        
-        print(f"YAML file successfully written to {filepath}")
-        return True
-    
-    except Exception as e:
-        print(f"Failed to write YAML file: {e}")
-        return False
-
-
-def load_validate_config(config_file: Path, schema_file: Path, section_key: str = None):
-    """
-    Load and validate a configuration file against a schema.
-
-    Args:
-        config_file (Path): Path to the configuration YAML file.
-        schema_file (Path): Path to the schema YAML file.
-        section_key (str, optional): Key for a specific section of the config to validate.
-
-    Returns:
-        tuple:
-            dict: Parsed and validated configuration (empty if errors occur).
-            dict: Errors categorized into 'fatal', 'recoverable', and 'other'.
-    """
-    def safe_yaml_load(file_path: Path) -> dict:
-        try:
-            return load_yaml_file(file_path)
-        except Exception as e:
-            msg = f"Failed to load {file_path} due error {e}"
-            logger.error(msg)
-            errors.append(msg)
-            return {}
-
-    config = {}
-    errors = []
-
-    logger.info(f"Loading configuration from: {config_file.resolve()}")
-    logger.info(f"Loading schema from: {schema_file.resolve()}")
-
-    schema_dict = safe_yaml_load(schema_file)
-    config_dict = safe_yaml_load(config_file)
-
-    if not schema_dict or not config_dict:
-        msg = "Critical error loading schema or configuration file"
-        logger.error(msg)
-        errors.append(msg)
-        return config, errors
-
-    logger.info("Validating configuration against schema...")
-
-    if section_key:
-        config_section = config_dict.get(section_key)
-        schema_section = schema_dict.get(section_key)
-    else:
-        config_section = config_dict
-        schema_section = schema_dict
-
-    try:
-        config = PluginManager.validate_config(config_section, schema_section)
-        logger.info(f"Configuration validated successfully")
-    except Exception as e:
-        msg = f"Validation failed {e}"
-        errors.append(msg)
-        return config, errors
-
-    return config, errors
-
-# +
-# args = parse_args()
-
-# if running_under_systemd() or args.daemon:
-#     # configuration file in daemon mode
-#     file_app_config = PATH_DAEMON_CONFIG / FNAME_APPLICATION_CONFIG
-# else:
-#     # configuration in user on-demand mode
-#     file_app_config = PATH_USER_CONFIG / FNAME_APPLICATION_CONFIG
-
-# # apply override from command line
-# if args.config:
-#     file_app_config = Path(args.config)
-
-
-# # get the parent dir of the application configuration file 
-# path_app_config = file_app_config.parent
-
-# # use the supplied plugin_config_file
-# if args.plugin_config:
-#     file_plugin_config = Path(args.plugin_config)
-# # otherwise use the default
-# else:
-#     file_plugin_config = path_app_config / FNAME_PLUGIN_CONFIG
-
-
-# # validate the application configuration
-# app_configuration, errors = load_validate_config(file_app_config, 
-#                                                  PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA,
-#                                                  KEY_APPLICATION_SCHEMA)
-                                                 
-
-# # get the resolution & screenmode from the configured epaper driver
-# resolution = (800, 640)
-# screen_mode = 'L'
-
-# app_configuration['resolution'] = resolution
-# app_configuration['screen_mode'] = screen_mode
-
-
-# # load the plugin configuration; validation will happen in the plugin manager
-# plugin_configuration = load_yaml_file(file_plugin_config)
-
-# # build the plugin manager 
-# plugin_manager = PluginManager()
-
-# plugin_manager.plugin_path = PATH_APP_PLUGINS
-# plugin_manager.config_path = PATH_APP_CONFIG
-# plugin_manager.base_schema_file = FNAME_PLUGIN_MANAGER_SCHEMA
-# plugin_manager.plugin_schema_file = FNAME_PLUGIN_SCHEMA
-# try:
-#     plugin_manager.config = app_configuration
-# except ValueError as e:
-#     msg = f"Configuration file error: {e}"
-#     logger.error(msg)
-#     # do something to bail out and stop loading here
-    
-# # add the plugins based on the loaded configurations
-# plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
-# # validate and load the plugins
-# plugin_manager.load_plugins()
-
-
-# from IPython.display import display, clear_output
-
-# current_image_hash = ''
-# plugin_manager.update_cycle()
-# try:
-#     while True:
-#         if current_image_hash != plugin_manager.foreground_plugin.image_hash:
-#             current_image_hash = plugin_manager.foreground_plugin.image_hash
-#             clear_output(wait=True)        
-#             display(plugin_manager.foreground_plugin.image)
-
-#         time.sleep(5)
-#         plugin_manager.update_cycle()
-# except KeyboardInterrupt:
-#     logger.info("Stopped update loop")
-            
 
 # +
 ###############################################################################
@@ -498,22 +266,6 @@ def main():
     # Register our signal handlers
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
-
-    # load applicaiton configuration
-    # app_config, errors = load_application_config()
-
-    
-
-    if len(errors.get('fatal'), 0) > 0:
-        logger.error("Fatal errors occured during configuration load:")
-        for e in errors:
-            logger.error(f"{e}")
-            print(e)
-
-    web_port = app_config.get('port', PORT)
-    log_level = app_config.get('log_level', logging.WARNING)
-
-    # logger.setLevel(log_level)
 
     args = parse_args()
     
@@ -539,14 +291,36 @@ def main():
     else:
         file_plugin_config = path_app_config / FNAME_PLUGIN_CONFIG
     
+    file_app_schema = PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA
+
+    try:
+        app_config_yaml = load_yaml_file(file_app_config)
+        config_schema_yaml = load_yaml_file(file_app_schema)
+
+        # add plugin schema and plugin manager schema here
+        
+    except (FileNotFoundError, ValueError) as e:
+        logger.error(f'Failed to read configuration files: {e}')
+        cleanup()
+        
+ 
+    try:
+        logger.info('Validating application configuration')
+        logger.debug(file_app_config)
+        app_configuration = validate_config(app_config_yaml[KEY_APPLICATION_SCHEMA], config_schema_yaml)
+    except ValueError as e:
+        logger.error(f'Failed to validate configuration in {file_app_config}')
+        cleanup()
     
-    # validate the application configuration
-    app_configuration, errors = load_validate_config(file_app_config, 
-                                                     PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA,
-                                                     KEY_APPLICATION_SCHEMA)
-                                                     
+    
+    # get the web port and log level
+    web_port = app_configuration.get('port', PORT)
+    log_level = app_configuration.get('log_level', logging.WARNING)
+    
     
     # get the resolution & screenmode from the configured epaper driver
+
+    ### hard coded for the moment
     resolution = (800, 640)
     screen_mode = 'L'
     
@@ -588,14 +362,10 @@ def main():
     # logger.info(f"Starting Flask on port {web_port}...")
     # # In production behind systemd, you might switch to gunicorn or uwsgi; for dev, this is fine.
     # app.run(host="0.0.0.0", port=PORT, debug=False)
-# -
-
-
-
 # +
 test_args = [
              # ('-d', None), 
-             ('-c', '~/.config/com.txoof.paperpi/paperppi.yaml'), 
+             ('-c', '~/.config/com.txoof.paperpi/paperpi_config.yaml'), 
              # ('-p', '~/.config/com.txoof.paperpi/plugins_config.yaml')
             ]
 
@@ -622,3 +392,5 @@ sys.argv
 
 if __name__ == "__main__":
     main()
+
+

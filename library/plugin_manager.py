@@ -35,10 +35,13 @@ from time import monotonic
 try:
     # from .exceptions import PluginError, ImageError, PluginTimeoutError, FileError, ConfigurationError
     from .base_plugin import BasePlugin
+    from .config_utils import validate_config
 except ImportError:
 #     # support jupyter developement
 #     from exceptions import PluginError, ImageError, PluginTimeoutError, FileError, ConfigurationError
     from base_plugin import BasePlugin
+    from config_utils import validate_config
+
 
 # +
 # print(f"In base_plugin.py, __name__ = {__name__}")
@@ -204,92 +207,95 @@ class PluginManager:
 
     @staticmethod
     def validate_config(config: dict, schema: dict) -> dict:
-        """
-        Validate `config` against a dict-based schema, returning a new dict 
-        that merges defaults and logs warnings for errors. Supports range validation.
+        # thin wrapper
+        return validate_config(config, schema)
+    # def validate_config(config: dict, schema: dict) -> dict:
+    #     """
+    #     Validate `config` against a dict-based schema, returning a new dict 
+    #     that merges defaults and logs warnings for errors. Supports range validation.
     
-        Args:
-            config (dict): The configuration to be validated.
-            schema (dict): Schema describing expected keys, types, allowed values, and ranges.
+    #     Args:
+    #         config (dict): The configuration to be validated.
+    #         schema (dict): Schema describing expected keys, types, allowed values, and ranges.
     
-        Returns:
-            dict: A *merged* config with defaults applied.
+    #     Returns:
+    #         dict: A *merged* config with defaults applied.
     
-        Raises:
-            ValueError: If validation fails for any required or type mismatch.
-        """
-        validated_config = {}
-        errors = []
+    #     Raises:
+    #         ValueError: If validation fails for any required or type mismatch.
+    #     """
+    #     validated_config = {}
+    #     errors = []
     
-        for key, rules in schema.items():
-            # Gather helpful info from the schema
-            default_val = rules.get('default')
-            required = rules.get('required', False)
-            allowed = rules.get('allowed')
-            value_range = rules.get('range', None)  # Range for numerical values
-            description = rules.get('description', 'No description provided')
+    #     for key, rules in schema.items():
+    #         # Gather helpful info from the schema
+    #         default_val = rules.get('default')
+    #         required = rules.get('required', False)
+    #         allowed = rules.get('allowed')
+    #         value_range = rules.get('range', None)  # Range for numerical values
+    #         description = rules.get('description', 'No description provided')
     
-            # Convert string type to actual Python type
-            try:
-                expected_type = eval(rules.get('type', 'str'))
-            except NameError:
-                logger.warning(f"Unknown type in schema for '{key}'. Using 'str'.")
-                expected_type = str
+    #         # Convert string type to actual Python type
+    #         try:
+    #             expected_type = eval(rules.get('type', 'str'))
+    #         except NameError:
+    #             logger.warning(f"Unknown type in schema for '{key}'. Using 'str'.")
+    #             expected_type = str
     
-            # Handle missing required keys
-            if key not in config:
-                if required:
-                    errors.append(
-                        f"'{key}' configuration key is required, but missing. Reasonable value: {default_val}. Description: {description}"
-                    )
-                validated_config[key] = default_val
-                continue
+    #         # Handle missing required keys
+    #         if key not in config:
+    #             if required:
+    #                 errors.append(
+    #                     f"'{key}' configuration key is required, but missing. Reasonable value: {default_val}. Description: {description}"
+    #                 )
+    #             validated_config[key] = default_val
+    #             continue
     
-            # Key is present in user's config
-            value = config[key]
+    #         # Key is present in user's config
+    #         value = config[key]
     
-            # Type validation
-            if not isinstance(value, expected_type):
-                errors.append(
-                    f"'{key}' must be of type {expected_type}, got {type(value).__name__}."
-                )
-                validated_config[key] = default_val
-                continue
+    #         # Type validation
+    #         if not isinstance(value, expected_type):
+    #             errors.append(
+    #                 f"'{key}' must be of type {expected_type}, got {type(value).__name__}."
+    #             )
+    #             validated_config[key] = default_val
+    #             continue
     
-            # Allowed value validation
-            if allowed and value not in allowed:
-                errors.append(
-                    f"'{key}' must be one of {allowed}, got {value}."
-                )
-                validated_config[key] = default_val
-                continue
+    #         # Allowed value validation
+    #         if allowed and value not in allowed:
+    #             errors.append(
+    #                 f"'{key}' must be one of {allowed}, got {value}."
+    #             )
+    #             validated_config[key] = default_val
+    #             continue
     
-            # Range validation for numerical types (int, float)
-            if value_range and isinstance(value, (int, float)):
-                min_val, max_val = value_range
-                if not (min_val <= value <= max_val):
-                    errors.append(
-                        f"'{key}' must be within the range {value_range}, got {value}."
-                    )
-                    validated_config[key] = default_val
-                    continue
+    #         # Range validation for numerical types (int, float)
+    #         if value_range and isinstance(value, (int, float)):
+    #             min_val, max_val = value_range
+    #             if not (min_val <= value <= max_val):
+    #                 errors.append(
+    #                     f"'{key}' must be within the range {value_range}, got {value}."
+    #                 )
+    #                 validated_config[key] = default_val
+    #                 continue
     
-            # Store valid values
-            validated_config[key] = value
+    #         # Store valid values
+    #         validated_config[key] = value
     
-        # Log and keep extra keys that aren't in the schema
-        for extra_key in config.keys() - schema.keys():
-            logger.debug(f"Extra key '{extra_key}' in config not in schema. Keeping as-is.")
-            validated_config[extra_key] = config[extra_key]
+    #     # Log and keep extra keys that aren't in the schema
+    #     for extra_key in config.keys() - schema.keys():
+    #         logger.debug(f"Extra key '{extra_key}' in config not in schema. Keeping as-is.")
+    #         validated_config[extra_key] = config[extra_key]
     
-        # If errors occurred, raise collectively
-        if errors:
-            for e in errors:
-                logger.warning(e)
-            raise ValueError(f"Plugin manager configuration validation failed: {e}")
+    #     # If errors occurred, raise collectively
+    #     if errors:
+    #         for e in errors:
+    #             logger.warning(e)
+    #         raise ValueError(f"Plugin manager configuration validation failed: {e}")
     
-        logger.info("Configuration validated successfully.")
-        return validated_config    
+    #     logger.info("Configuration validated successfully.")
+    #     return validated_config    
 
     
     # CONFIG PROPERTIES
