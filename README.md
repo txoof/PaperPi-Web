@@ -57,3 +57,17 @@ To work in a Jupyter Notebook, take the following steps:
 - Mac OS users: [iTerm2 has built in TMUX support. ](https://iterm2.com/documentation-tmux-integration.html). Set it up once and you can connect automatically using tmux and create new windows with CMD+N or split existing windows with CMD+SHIFT+D
     - Use the command above as the profile command.
 
+## Plugins
+
+### PluginManager
+
+The plugin manger loads plugins based on the `paperpi_plugins.yaml`.
+
+#### Active Plugins
+
+Active display all the time
+
+#### Dormant Plugins
+
+Dormant only display when required (e.g. now playing information)
+
