@@ -25,205 +25,82 @@ import signal
 import os
 from pathlib import Path
 
-from flask import Flask, jsonify, request
-
 from constants import * 
 
 # from library.base_plugin import BasePlugin
 from library.config_utils import validate_config, load_yaml_file, write_yaml_file
 from library.plugin_manager import PluginManager
-
-
-# +
-# ###############################################################################
-# # LOGGING CONFIGURATION
-# ###############################################################################
-
-def running_under_systemd():
-    """
-    A simple heuristic to detect if we're running under systemd.
-    If these environment variables are present, systemd likely launched us.
-    """
-    return ('INVOCATION_ID' in os.environ) or ('JOURNAL_STREAM' in os.environ)
-
-
-# # Configure the main logger
-# logger = logging.getLogger("PaperPi")
-# logger.setLevel(logging.INFO)
-
-# # Avoid adding duplicate handlers
-# if not logger.hasHandlers():
-#     handler = logging.StreamHandler(sys.stdout)
-#     formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
-#     handler.setFormatter(formatter)
-#     logger.addHandler(handler)
-
-#     if running_under_systemd():
-#         try:
-#             from systemd.journal import JournalHandler
-#             handler = JournalHandler()
-#         except ImportError:
-#             handler = logging.StreamHandler()
-#     else:
-#         handler = logging.StreamHandler()
-
-#     formatter = logging.Formatter(
-#         fmt='%(asctime)s [%(levelname)s] %(message)s',
-#         datefmt='%Y-%m-%d %H:%M:%S'
-#     )
-#     handler.setFormatter(formatter)
-#     logger.addHandler(handler)
-
-# # Plugin Manager Logger
-# plugin_manager_logger = logging.getLogger("library.plugin_manager")
-# plugin_manager_logger.setLevel(logging.INFO)
-# plugin_manager_logger.propagate = True
-
-# +
-def setup_logging(level=logging.INFO):
-    # Set up the root logger
-    logger = logging.getLogger()
-    logger.setLevel(level)
-
-    # Remove existing handlers to avoid duplicates
-    if logger.hasHandlers():
-        logger.handlers.clear()
-
-    # Create a console handler
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
-    handler.setFormatter(formatter)
-    
-    # Attach the handler to the root logger
-    logger.addHandler(handler)
-
-    # Test logging from the main program
-    logger.info("Logger setup complete. Ready to capture logs.")
-    
-    # Test logging from a simulated library
-    library_logger = logging.getLogger("library.plugin_manager")
-
-    return logger
+from daemon.daemon import daemon_loop
+from logging_setup import setup_logging
+# -
 
 logger = setup_logging()
 
 # +
-###############################################################################
-# FLASK WEB SERVER
-###############################################################################
+# # ###############################################################################
+# # # LOGGING CONFIGURATION
+# # ###############################################################################
 
-app = Flask(__name__)
-
-# We'll store a flag indicating the daemon loop is running
-daemon_running = True
-# We'll also detect if we're in systemd mode or foreground
-systemd_mode = running_under_systemd()
-
-@app.route('/')
-def home():
-    return """
-    <h1>Welcome to PaperPi</h1>
-    <p>Stub login page or config interface will go here.</p>
-    <p>Try POSTing to /stop to halt the daemon.</p>
-    """
-
-@app.route('/login')
-def login():
-    # Stub route for future authentication implementation
-    return "Login page (to be implemented)."
-
-@app.route('/stop', methods=['POST'])
-def stop_route():
-    """
-    A web endpoint to stop the daemon thread (and Flask).
-    In systemd mode, the service will stop in the background.
-    In foreground mode, we print 'stopped: press ctrl+c to exit.'
-    """
-    global daemon_running
-    daemon_running = False
-    logger.info("Received /stop request; shutting down daemon and Flask...")
-
-    # Ask Flask's built-in server to shut down
-    shutdown_server()
-
-    if not systemd_mode:
-        # In foreground mode, let the user know they can Ctrl+C
-        logger.info("stopped: press ctrl+c to exit")
-
-    return jsonify({"message": "Stopping daemon..."})
-
-def shutdown_server():
-    """
-    Trigger a shutdown of the built-in Werkzeug server.
-    """
-    func = request.environ.get('werkzeug.server.shutdown')
-    if func is None:
-        logger.warning("Not running with the Werkzeug Server, can't shut down cleanly.")
-    else:
-        func()
+# def running_under_systemd():
+#     """
+#     A simple heuristic to detect if we're running under systemd.
+#     If these environment variables are present, systemd likely launched us.
+#     """
+#     return ('INVOCATION_ID' in os.environ) or ('JOURNAL_STREAM' in os.environ)
 
 
 # +
-###############################################################################
-# DAEMON LOOP
-###############################################################################
+# def setup_logging(level=logging.INFO):
+#     # Set up the root logger
+#     logger = logging.getLogger()
+#     logger.setLevel(level)
 
-def daemon_loop():
-    """
-    The background thread that handles e-paper updates.
-    It runs until daemon_running = False.
-    """
-    logger.info("Daemon loop started.")
-    while daemon_running:
-        logger.info("display update goes here")
-        logger.info('morestuff')
-        # In production, you might call a function to update the display here
-        time.sleep(5)
-    logger.info("Daemon loop stopped.")
+#     # Remove existing handlers to avoid duplicates
+#     if logger.hasHandlers():
+#         logger.handlers.clear()
 
+#     # Create a console handler
+#     handler = logging.StreamHandler(sys.stdout)
+#     formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
+#     handler.setFormatter(formatter)
+    
+#     # Attach the handler to the root logger
+#     logger.addHandler(handler)
 
-# from IPython.display import display, clear_output
+#     # Test logging from the main program
+#     logger.info("Logger setup complete. Ready to capture logs.")
+    
+#     # Test logging from a simulated library
+#     library_logger = logging.getLogger("library.plugin_manager")
 
-# current_image_hash = ''
-# plugin_manager.update_cycle()
-# try:
-#     while True:
-#         if current_image_hash != plugin_manager.foreground_plugin.image_hash:
-#             current_image_hash = plugin_manager.foreground_plugin.image_hash
-#             clear_output(wait=True)        
-#             display(plugin_manager.foreground_plugin.image)
+#     return logger
 
-#         time.sleep(5)
-#         plugin_manager.update_cycle()
-# except KeyboardInterrupt:
-#     logger.info("Stopped update loop")    
+# logger = setup_logging()
 
 # +
-###############################################################################
-# SIGNAL HANDLING
-###############################################################################
+# ###############################################################################
+# # SIGNAL HANDLING
+# ###############################################################################
 
-def handle_signal(signum, frame):
-    """
-    Handle SIGINT (Ctrl+C) or SIGTERM (systemctl stop) for a graceful shutdown:
-      - Stop the daemon loop
-      - Shut down Flask if possible
-    """
-    logger.info(f"Signal {signum} received, initiating shutdown.")
-    global daemon_running
-    daemon_running = False
+# def handle_signal(signum, frame):
+#     """
+#     Handle SIGINT (Ctrl+C) or SIGTERM (systemctl stop) for a graceful shutdown:
+#       - Stop the daemon loop
+#       - Shut down Flask if possible
+#     """
+#     logger.info(f"Signal {signum} received, initiating shutdown.")
+#     global daemon_running
+#     daemon_running = False
 
-    # Attempt to stop the Flask server
-    # (If running under systemd or a non-Werkzeug server, it might just exit the main thread.)
-    try:
-        shutdown_server()
-    except Exception as e:
-        logger.debug(f"Exception while shutting down Flask: {e}")
+    
+#     # shtudown web server here
+#     try:
+#         pass # shutdown 
+#     except Exception as e:
+#         logger.debug(f"Exception while shutting down Flask: {e}")
 
-    # If running in the foreground, user can also press Ctrl+C again, but let's exit gracefully
-    sys.exit(0)
-
-
+#     # If running in the foreground, user can also press Ctrl+C again, but let's exit gracefully
+#     sys.exit(0)
 # -
 
 ###############################################################################
