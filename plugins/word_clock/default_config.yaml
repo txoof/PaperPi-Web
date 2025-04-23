@@ -1,7 +1,0 @@
-# Word Clock
-# Default configuration with suggested settings for this plugin
-name: Word Clock
-layout_name: layout
-duration: 240
-refresh_interval: 100
-description: 'Display the aproximate time in words'
