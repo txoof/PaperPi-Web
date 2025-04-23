@@ -1,0 +1,27 @@
+<edit>
+    <file path="web/templates/config.html" type="create">
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>PaperPi Configuration</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body>
+        <main>
+            <h1>PaperPi Configuration</h1>
+            <div class="config-container">
+                {% for item in config_items %}
+                    <section class="config-item">
+                        <h2 class="config-key">{{ item.key }}</h2>
+                        <p class="config-value"><strong>Value:</strong> {{ item.value }}</p>
+                        <p class="config-description">{{ item.description }}</p>
+                    </section>
+                {% endfor %}
+            </div>
+        </main>
+    </body>
+    </html>
+    </file>
+    </edit>
+    

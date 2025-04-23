@@ -1,0 +1,68 @@
+# schema file for validating PaperPi configuration
+main:
+    web_port:
+        type: int
+        default: 2693
+        description: 'Port on which to run the web interface'
+    daemon_http_port:
+        type: int
+        default: 2822
+        description: 'Port on which to run the daemon HTTP API interface'
+    display_type:
+        type: str
+        default: Unset
+        required: true
+        description: 'Type of display to use use. Use "HD" for all IT8951 based screens'
+    vcom:
+        type: float
+        default: -1.0
+        range: [-5.0, 0.0]
+        description: 'Required HD screen VCOM value (see ribbon cable)'
+    max_refresh:
+        type: int,
+        default: 4,
+        range: [0, 10]
+        description: 'Maximum partial display refreshes prior to a full screen wipe for HD displays'
+    log_level:
+        type: str
+        default: "WARNING"
+        allowed: ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        description: 'Logging Level'
+    splash:
+        type: bool
+        default: true
+        description: 'Show splash screen on startup'
+    rotation:
+        type: int
+        default: 0
+        allowed: [0, 90, 180, -90]
+        description: 'Rotate the display to portrat, landscape'
+    mirror:
+        type: bool
+        default: false
+        description: 'Some panels display content "mirrored" use this to flip the images'
+    color:
+        type: bool
+        default: false
+        description: 'Use the color features of RGB screens'
+    no_wipe:
+        type: bool
+        default: true
+        description: 'Do not wipe the screen on shutdown; leave the last image on the screen'
+    plugin_timeout:
+        type: int
+        default: 30
+        range: [0, 600]
+        description: 'Time in seconds before skipping a plugin that may be hung or unresponsive'
+    max_plugin_failures:
+        type: int
+        default: 5
+        description: 'Number of consecutive failures before a plugin is removed from the display loop. Use 0 for never.'
+    resolution:
+        description: 'Resolution provided by the current driver'
+        editable: False
+    screen_mode:
+        description: 'Screen display mode provided by the current driver. L: Grayscale; 1: Black/White'
+        editable: False
+        
+        
