@@ -25,83 +25,36 @@ import signal
 import os
 from pathlib import Path
 
+import uvicorn
+
+
 from constants import * 
 
 # from library.base_plugin import BasePlugin
 from library.config_utils import validate_config, load_yaml_file, write_yaml_file
 from library.plugin_manager import PluginManager
-from daemon.daemon import daemon_loop
+from daemon.daemon import set_config, start_http_server, handle_signal
 from logging_setup import setup_logging
-# -
+
 
 logger = setup_logging()
 
-# +
-# # ###############################################################################
-# # # LOGGING CONFIGURATION
-# # ###############################################################################
-
-# def running_under_systemd():
-#     """
-#     A simple heuristic to detect if we're running under systemd.
-#     If these environment variables are present, systemd likely launched us.
-#     """
-#     return ('INVOCATION_ID' in os.environ) or ('JOURNAL_STREAM' in os.environ)
-
-
-# +
-# def setup_logging(level=logging.INFO):
-#     # Set up the root logger
-#     logger = logging.getLogger()
-#     logger.setLevel(level)
-
-#     # Remove existing handlers to avoid duplicates
-#     if logger.hasHandlers():
-#         logger.handlers.clear()
-
-#     # Create a console handler
-#     handler = logging.StreamHandler(sys.stdout)
-#     formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
-#     handler.setFormatter(formatter)
-    
-#     # Attach the handler to the root logger
-#     logger.addHandler(handler)
-
-#     # Test logging from the main program
-#     logger.info("Logger setup complete. Ready to capture logs.")
-    
-#     # Test logging from a simulated library
-#     library_logger = logging.getLogger("library.plugin_manager")
-
-#     return logger
-
-# logger = setup_logging()
 
 # +
 # ###############################################################################
-# # SIGNAL HANDLING
+# # LOGGING CONFIGURATION
 # ###############################################################################
 
-# def handle_signal(signum, frame):
-#     """
-#     Handle SIGINT (Ctrl+C) or SIGTERM (systemctl stop) for a graceful shutdown:
-#       - Stop the daemon loop
-#       - Shut down Flask if possible
-#     """
-#     logger.info(f"Signal {signum} received, initiating shutdown.")
-#     global daemon_running
-#     daemon_running = False
+def running_under_systemd():
+    """
+    A simple heuristic to detect if we're running under systemd.
+    If these environment variables are present, systemd likely launched us.
+    """
+    return ('INVOCATION_ID' in os.environ) or ('JOURNAL_STREAM' in os.environ)
 
-    
-#     # shtudown web server here
-#     try:
-#         pass # shutdown 
-#     except Exception as e:
-#         logger.debug(f"Exception while shutting down Flask: {e}")
 
-#     # If running in the foreground, user can also press Ctrl+C again, but let's exit gracefully
-#     sys.exit(0)
 # -
+
 
 ###############################################################################
 # ARGUMENT PARSING
@@ -112,7 +65,7 @@ def parse_args():
     if 'ipykernel_launcher' in sys.argv[0]:
         argv = sys.argv[3:]
     else:
-        argv = sys.argv
+        argv = sys.argv[1:]
         
     parser = argparse.ArgumentParser(description="PaperPi App")
     parser.add_argument("-d", "--daemon", action="store_true",
@@ -124,6 +77,9 @@ def parse_args():
     parser.add_argument("-p", "--plugin_config", type=str, default=None,
                           help="Path to plugin configuration yaml file")
     
+    parser.add_argument("-l", "--log_level", type=str, default=None,
+                         help="Logging output level (DEBUG, INFO, WARNING, ERROR)")
+
     return parser.parse_args(argv)
 
 
@@ -179,21 +135,34 @@ def main():
     except (FileNotFoundError, ValueError) as e:
         logger.error(f'Failed to read configuration files: {e}')
         cleanup()
+    
+    if args.log_level:
+        if args.log_level.upper() in ['DEBUG', 'INFO', 'WARNING', 'ERROR']:
+            log_level = args.log_level.upper()
+        else:
+            log_level = LOG_LEVEL
+            logger.warning(f'unknown log_level set on command line: {args.log_level}')
         
- 
+    else:
+        log_level = LOG_LEVEL
+    
+    logger.setLevel(log_level)
+    logger.debug(f"Log level: {log_level}")
+
     try:
         logger.info('Validating application configuration')
         logger.debug(file_app_config)
-        app_configuration = validate_config(app_config_yaml[KEY_APPLICATION_SCHEMA], config_schema_yaml)
+        app_configuration = validate_config(app_config_yaml[KEY_APPLICATION_SCHEMA], config_schema_yaml[KEY_APPLICATION_SCHEMA])
     except ValueError as e:
         logger.error(f'Failed to validate configuration in {file_app_config}')
         cleanup()
     
-    
+
+    log_level = app_configuration.get('log_level', LOG_LEVEL)
+
     # get the web port and log level
-    web_port = app_configuration.get('port', PORT)
-    log_level = app_configuration.get('log_level', logging.WARNING)
-    
+    web_port = app_configuration.get('web_port', WEB_PORT)
+    daemon_http_port = app_configuration.get('daemon_http_port', DAEMON_HTTP_PORT)
     
     # get the resolution & screenmode from the configured epaper driver
 
@@ -205,6 +174,9 @@ def main():
     app_configuration['screen_mode'] = screen_mode
     
     
+    logger.debug(f"app_configuration:\n {app_configuration}")
+
+
     # load the plugin configuration; validation will happen in the plugin manager
     plugin_configuration = load_yaml_file(file_plugin_config)
     
@@ -221,16 +193,23 @@ def main():
         msg = f"Configuration file error: {e}"
         logger.error(msg)
         # do something to bail out and stop loading here
+    logger.debug(f'plugin manager config:\n{plugin_manager.config}')
+    ### TEMPORARILY DISABLED
+
+    ## add the plugins based on the loaded configurations
+    # plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
+    ## validate and load the plugins
+    # plugin_manager.load_plugins()
+
+    ### TEMPORARILY DISABLED
+    
+    set_config(app_configuration, config_schema_yaml.get(KEY_APPLICATION_SCHEMA, {}))
+    set_config(app_configuration, scope='app')
+    start_http_server(port=daemon_http_port)
+
+    # logger.info(f"Starting FastAPI server on port {web_port}...")
+    # uvicorn.run(app, host='0.0.0.0', port=web_port)
         
-    # add the plugins based on the loaded configurations
-    plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
-    # validate and load the plugins
-    plugin_manager.load_plugins()
-
-
-
-    
-    
     # # Start the daemon loop in a background thread
     # thread = threading.Thread(target=daemon_loop, daemon=True)
     # thread.start()
@@ -261,7 +240,7 @@ for key, value in test_args:
         sys.argv.append(key)
         if value is not None:
             sys.argv.append(value)
-        
+print("ARGV ARE:")
 print(sys.argv) 
 # -
 
