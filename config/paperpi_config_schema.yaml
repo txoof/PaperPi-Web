@@ -1,9 +1,13 @@
 # schema file for validating PaperPi configuration
 main:
-    port:
+    web_port:
         type: int
         default: 2693
         description: 'Port on which to run the web interface'
+    daemon_http_port:
+        type: int
+        default: 2822
+        description: 'Port on which to run the daemon HTTP API interface'
     display_type:
         type: str
         default: Unset

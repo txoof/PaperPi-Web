@@ -24,3 +24,7 @@ main:
     plugin_timeout: 30
     # maximum consecutive number of times a plugin may fail before being removed from the display loop
     max_plugin_failures: 5
+    # Web Interface Port
+    web_port: 2820
+    # Daemon API Port
+    daemon_http_port: 2822
