@@ -42,6 +42,7 @@ PID_FILE = "/tmp/paperpi_daemon.pid"
 ### Logging
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+LOG_LEVEL = "WARNING"
 
 ### Environment Keys
 ENV_PASS = "PAPERPI_PASS"
