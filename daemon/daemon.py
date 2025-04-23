@@ -12,10 +12,60 @@
 #     name: paperpi-web-venv-33529be2c6
 # ---
 
-# +
-###############################################################################
-# DAEMON LOOP
-###############################################################################
+
+import logging
+import sys
+import json
+import time
+import threading
+from http.server import BaseHTTPRequestHandler
+
+
+class DaemonRequestHandler(BaseHTTPRequestHandler):
+    """
+    Handles HTTP GET requests for the PaperPi daemon.
+
+    This class is used by the daemon's internal HTTP server to provide
+    configuration and status information for debugging or integration.
+    """
+
+    def do_GET(self):
+        """
+        Handle GET requests to the daemon's HTTP server.
+
+        Supports:
+        - /config/app: returns the current app configuration as JSON.
+        """
+        if self.path == '/config/app':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = json.dumps(config_store.get('app', {}), indent=2)
+            self.wfile.write(response.encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+logger = logging.getLogger(__name__)
+
+config_store = {
+}
+
+daemon_running = True
+
+from http.server import HTTPServer
+
+def start_http_server(port=8888):
+    """
+    Starts an HTTP server in a background thread to serve daemon data.
+    """
+    server = HTTPServer(('localhost', port), DaemonRequestHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info(f"Daemon HTTP server running at http://localhost:{port}")
+
+def set_config(config: dict, scope: str = 'app'):
+    config_store[scope] = config
 
 def daemon_loop():
     """
@@ -67,4 +117,5 @@ def handle_signal(signum, frame):
 
     # If running in the foreground, user can also press Ctrl+C again, but let's exit gracefully
     sys.exit(0)
+
 
