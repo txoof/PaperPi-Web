@@ -46,6 +46,6 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 ### Environment Keys
 ENV_PASS = "PAPERPI_PASS"
 
-### Web Interface
-PORT = 2693
-
+### API and Web Interface Ports
+WEB_PORT = 2820
+DAEMON_HTTP_PORT = 2822
