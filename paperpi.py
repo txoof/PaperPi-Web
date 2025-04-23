@@ -33,7 +33,7 @@ from constants import *
 # from library.base_plugin import BasePlugin
 from library.config_utils import validate_config, load_yaml_file, write_yaml_file
 from library.plugin_manager import PluginManager
-from daemon.daemon import set_config, start_http_server, handle_signal
+from daemon.daemon import set_config, start_http_server, handle_signal, daemon_loop
 from logging_setup import setup_logging
 
 
@@ -142,9 +142,12 @@ def main():
         else:
             log_level = LOG_LEVEL
             logger.warning(f'unknown log_level set on command line: {args.log_level}')
-        
+
     else:
         log_level = LOG_LEVEL
+
+    # set the log level in the app config 
+    app_config_yaml[KEY_APPLICATION_SCHEMA]['log_level'] = log_level
     
     logger.setLevel(log_level)
     logger.debug(f"Log level: {log_level}")
@@ -194,6 +197,7 @@ def main():
         logger.error(msg)
         # do something to bail out and stop loading here
     logger.debug(f'plugin manager config:\n{plugin_manager.config}')
+
     ### TEMPORARILY DISABLED
 
     ## add the plugins based on the loaded configurations
@@ -203,10 +207,15 @@ def main():
 
     ### TEMPORARILY DISABLED
     
-    set_config(app_configuration, config_schema_yaml.get(KEY_APPLICATION_SCHEMA, {}))
     set_config(app_configuration, scope='app')
     start_http_server(port=daemon_http_port)
 
+    # Start the daemon loop in a dedicated thread after setting config and launching HTTP server
+    daemon_thread = threading.Thread(target=daemon_loop, daemon=True)
+    daemon_thread.start()
+    daemon_thread.join()
+
+    logger.info('Cleaning up...')
     # logger.info(f"Starting FastAPI server on port {web_port}...")
     # uvicorn.run(app, host='0.0.0.0', port=web_port)
         

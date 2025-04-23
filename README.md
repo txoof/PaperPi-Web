@@ -71,3 +71,7 @@ Active display all the time
 
 Dormant only display when required (e.g. now playing information)
 
+
+## PaperPi Daemon API
+
+PaperPi includes a lightweight internal HTTP server that allows querying the current configuration and issuing control commands such as triggering a graceful shutdown. This is useful for debugging and local integration tools. See the full list of available endpoints and usage examples in the [DAEMON_HTTP_API](./docs/DAEMON_HTTP_API.md).

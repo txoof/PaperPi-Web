@@ -18,6 +18,7 @@ import sys
 import json
 import time
 import threading
+import signal
 from http.server import BaseHTTPRequestHandler
 
 
@@ -35,6 +36,7 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
 
         Supports:
         - /config/app: returns the current app configuration as JSON.
+        - /shutdown: triggers a graceful shutdown of the daemon.
         """
         if self.path == '/config/app':
             self.send_response(200)
@@ -42,6 +44,13 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             response = json.dumps(config_store.get('app', {}), indent=2)
             self.wfile.write(response.encode('utf-8'))
+        elif self.path == '/shutdown':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "shutting down"}).encode('utf-8'))
+            # Defer the shutdown to a separate thread so it doesn't block this one
+            threading.Thread(target=handle_signal, args=(signal.SIGTERM, None)).start()
         else:
             self.send_response(404)
             self.end_headers()
