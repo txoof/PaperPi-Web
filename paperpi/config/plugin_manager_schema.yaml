@@ -1,0 +1,24 @@
+# schema for validating main configuration for plugin manager and all plugins
+screen_mode:
+    type: str
+    default: '1'
+    allowed: ['1', 'L', 'RGB']
+    required: true
+    description: 'Display Type - 1: Monochrome, L: Grayscale, RGB: Red, Green, Blue'
+resolution:
+    type: tuple
+    default: (800, 480)
+    required: true
+    description: 'Resolution of screen; this is automaitcally detrmined by the display driver'
+cache_expire:
+    type: int
+    default: 2
+    description: 'Time in days to keep cached content'
+cache_root:
+    type: str
+    default: '/tmp/PaperPi_cache/'
+    description: 'Root of cache directory'
+max_plugin_failures:
+    type: int
+    default: 5
+    description: 'Maximim consecutive times a plugin can fail before being removed from the display loop'
