@@ -169,7 +169,7 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
     if strict:
         for extra_key in extra_keys:
             logger.warning(f"Extra key '{extra_key}' is not defined in schema and will be removed.")
-            logger.debug(f"DEVELOPERS: if you are adding a new configuration key, you must add {extra_key} to the appropriate schema file.")
+            logger.debug(f"DEVELOPERS: if you are adding a new configuration key, you must add '{extra_key}' to the appropriate schema file!")
         # No extra keys are added to validated_config in strict mode
     else:
         for extra_key in extra_keys:
