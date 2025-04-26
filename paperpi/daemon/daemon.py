@@ -7,7 +7,7 @@ import signal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from paperpi.library.config_utils import validate_config, load_yaml_file
+from paperpi.library.config_utils import validate_config, load_yaml_file, check_config_problems
 from paperpi.library.plugin_manager import PluginManager
 from paperpi.constants import KEY_APPLICATION_SCHEMA, KEY_PLUGIN_DICT
 
@@ -47,6 +47,8 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
             '/config/app': self.handle_config_app,
             '/shutdown': self.handle_shutdown,
             '/reload': self.handle_reload,
+            '/status': self.handle_status,
+            '/check_config': self.handle_config_check,
             '/': self.handle_help,
         }
 
@@ -55,6 +57,20 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
             handler_func()
         else:
             self.send_json({'error': 'Not found'}, status=404)
+
+    def do_POST(self):
+        """
+        Handle POST requests using a dynamic route dispatcher.
+        """
+        self.routes_post = {
+            '/config/check': self.handle_config_check,
+        }
+
+        handler_func = self.routes_post.get(self.path)
+        if handler_func:
+            handler_func()
+        else:
+            self.send_json({'error': 'Not found'}, status=404)    
 
     def handle_help(self):
         """
@@ -86,16 +102,62 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         """
         Reloads the configuration files and signals daemon to restart.
         """
-        self.send_json({'status': 'reloading configuration'})
         reload_config(self.server.controller)
+        future_port = self.server.controller.get_config('app').get('daemon_http_port', None)
+        self.send_json({
+            'status': 'reloading configuration',
+            'future_port': future_port
+        })
         self.server.controller.request_reload()
         logger.info('Configuration reload requested.')
 
+    def handle_status(self):
+        """"
+        Display basic status information
+        """
+        self.send_json({
+            'running': self.server.controller.running,
+            'app_config': self.server.controller.get_config('app'),
+            'plugin_config': self.server.controller.get_config('plugin_config')
+        })
+
+    def handle_config_check(self):
+        """
+        Accepts a posted configuration dictionary and returns validation issues.
+        """
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length)
+        try:
+            submitted_config = json.loads(post_data.decode('utf-8'))
+        except json.JSONDecodeError:
+            self.send_json({'error': 'Invalid JSON format.'}, status=400)
+            return
+
+        file_app_schema = self.server.controller.get_config('configuration_files').get('file_app_schema')
+        try:
+            schema = load_yaml_file(file_app_schema).get(KEY_APPLICATION_SCHEMA, {})
+        except Exception as e:
+            logger.error(f"Failed to load schema: {e}")
+            self.send_json({'error': 'Failed to load schema.'}, status=500)
+            return
+
+        problems = check_config_problems(submitted_config, schema, strict=True)
+        self.send_json({'problems': problems})
+
+
     def send_json(self, data, status=200):
+        data_with_server_info = {
+            "data": data,
+            "server_info": {
+                "current_port": self.server.controller.current_port
+            }
+        }
         self.send_response(status)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
-        self.wfile.write(json.dumps(data, indent=2).encode('utf-8'))
+        self.wfile.write(json.dumps(data_with_server_info, indent=2).encode('utf-8'))
+
+
 
 class DaemonHTTPServer(HTTPServer):
     def __init__(self, server_address, RequestHandlerClass, controller):
