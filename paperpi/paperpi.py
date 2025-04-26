@@ -40,11 +40,6 @@ from paperpi.logging_setup import setup_logging
 logger = setup_logging()
 
 
-# +
-# ###############################################################################
-# # LOGGING CONFIGURATION
-# ###############################################################################
-
 def running_under_systemd():
     """
     A simple heuristic to detect if we're running under systemd.
@@ -55,10 +50,6 @@ def running_under_systemd():
 
 # -
 
-
-###############################################################################
-# ARGUMENT PARSING
-###############################################################################
 def parse_args():
 
     # detect jupyter's ipykernel_launcher and trim the jupyter args
@@ -94,11 +85,6 @@ def cleanup(msg: str = None):
 
     sys.exit(0)
 
-
-# +
-###############################################################################
-# MAIN ENTRY POINT
-###############################################################################
 
 def main():
     controller = DaemonController()
@@ -160,6 +146,8 @@ def main():
     # set to configuration file logging level if not set on the command line
     if not log_override:
         logger.setLevel(app_configuration.get('log_level', LOG_LEVEL))
+    else:
+        app_configuration['log_level'] = log_level
 
     controller.set_config(app_configuration, scope='app')
     controller.set_config(configuration_files, scope='configuration_files')
