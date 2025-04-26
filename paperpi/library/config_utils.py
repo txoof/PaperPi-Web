@@ -261,3 +261,16 @@ def write_yaml_file(filepath: str, data: list, backup: bool = False, keep: int =
     except Exception as e:
         print(f"Failed to write YAML file: {e}")
         return False
+
+def make_json_safe(obj):
+    """
+    Recursively convert a Python object into a JSON-serializable format.
+    """
+    if isinstance(obj, dict):
+        return {k: make_json_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_safe(v) for v in obj]
+    elif isinstance(obj, Path):
+        return str(obj)
+    else:
+        return obj
