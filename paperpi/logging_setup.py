@@ -15,7 +15,7 @@
 import logging
 import sys
 
-from constants import LOG_FORMAT, DATE_FORMAT
+from paperpi.constants import LOG_FORMAT, DATE_FORMAT
 
 
 # +
