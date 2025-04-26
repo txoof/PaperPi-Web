@@ -28,13 +28,13 @@ from pathlib import Path
 import uvicorn
 
 
-from constants import * 
+from paperpi.constants import * 
 
 # from library.base_plugin import BasePlugin
-from library.config_utils import validate_config, load_yaml_file, write_yaml_file
-from library.plugin_manager import PluginManager
-from daemon.daemon import set_config, start_http_server, handle_signal, daemon_loop
-from logging_setup import setup_logging
+from paperpi.library.config_utils import validate_config, load_yaml_file, write_yaml_file
+from paperpi.library.plugin_manager import PluginManager
+from paperpi.daemon.daemon import DaemonController, daemon_loop, load_configuration
+from paperpi.logging_setup import setup_logging
 
 
 logger = setup_logging()
@@ -77,8 +77,13 @@ def parse_args():
     parser.add_argument("-p", "--plugin_config", type=str, default=None,
                           help="Path to plugin configuration yaml file")
     
-    parser.add_argument("-l", "--log_level", type=str, default=None,
-                         help="Logging output level (DEBUG, INFO, WARNING, ERROR)")
+    parser.add_argument(
+        "-l", "--log_level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="WARNING",
+        help="Logging output level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+)
 
     return parser.parse_args(argv)
 
@@ -96,11 +101,24 @@ def cleanup(msg: str = None):
 ###############################################################################
 
 def main():
+    controller = DaemonController()
+
     # Register our signal handlers
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, lambda s, f: controller.stop())
+    signal.signal(signal.SIGTERM, lambda s, f: controller.stop())
 
     args = parse_args()
+
+    # set logging level immediately to default or command line value
+    if args.log_level:
+        logger.setLevel(args.log_level)
+        log_level = args.log_level
+        log_override = True
+        logging.info(f'Default logging set at command line to: {log_level}')
+    else:
+        logger.setLevel(LOG_LEVEL)
+        log_level = LOG_LEVEL
+        log_override = False
     
     if running_under_systemd() or args.daemon:
         # configuration file in daemon mode
@@ -112,7 +130,6 @@ def main():
     # apply override from command line
     if args.config:
         file_app_config = Path(args.config)
-    
     
     # get the parent dir of the application configuration file 
     path_app_config = file_app_config.parent
@@ -126,94 +143,29 @@ def main():
     
     file_app_schema = PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA
 
+
+    configuration_files = {
+        'file_app_config': file_app_config,
+        'file_plugin_config': file_plugin_config,
+        'file_app_schema': file_app_schema,
+        'key_application_schema': KEY_APPLICATION_SCHEMA
+    }
+    
+    # load the application configuration 
     try:
-        app_config_yaml = load_yaml_file(file_app_config)
-        config_schema_yaml = load_yaml_file(file_app_schema)
+        app_configuration = load_configuration(file_app_config, file_app_schema, KEY_APPLICATION_SCHEMA)
+    except (ValueError, FileNotFoundError) as e:
+        cleanup(f'Failed to load configuration: {e}')    
 
-        # add plugin schema and plugin manager schema here
-        
-    except (FileNotFoundError, ValueError) as e:
-        logger.error(f'Failed to read configuration files: {e}')
-        cleanup()
-    
-    if args.log_level:
-        if args.log_level.upper() in ['DEBUG', 'INFO', 'WARNING', 'ERROR']:
-            log_level = args.log_level.upper()
-        else:
-            log_level = LOG_LEVEL
-            logger.warning(f'unknown log_level set on command line: {args.log_level}')
+    # set to configuration file logging level if not set on the command line
+    if not log_override:
+        logger.setLevel(app_configuration.get('log_level', LOG_LEVEL))
 
-    else:
-        log_level = LOG_LEVEL
+    controller.set_config(app_configuration, scope='app')
+    controller.set_config(configuration_files, scope='configuration_files')
 
-    # set the log level in the app config 
-    app_config_yaml[KEY_APPLICATION_SCHEMA]['log_level'] = log_level
-    
-    logger.setLevel(log_level)
-    logger.debug(f"Log level: {log_level}")
-
-    try:
-        logger.info('Validating application configuration')
-        logger.debug(file_app_config)
-        app_configuration = validate_config(app_config_yaml[KEY_APPLICATION_SCHEMA], config_schema_yaml[KEY_APPLICATION_SCHEMA])
-    except ValueError as e:
-        logger.error(f'Failed to validate configuration in {file_app_config}')
-        cleanup()
-    
-
-    log_level = app_configuration.get('log_level', LOG_LEVEL)
-
-    # get the web port and log level
-    web_port = app_configuration.get('web_port', WEB_PORT)
-    daemon_http_port = app_configuration.get('daemon_http_port', DAEMON_HTTP_PORT)
-    
-    # get the resolution & screenmode from the configured epaper driver
-
-    ### hard coded for the moment
-    resolution = (800, 640)
-    screen_mode = 'L'
-    
-    app_configuration['resolution'] = resolution
-    app_configuration['screen_mode'] = screen_mode
-    
-    
-    logger.debug(f"app_configuration:\n {app_configuration}")
-
-
-    # load the plugin configuration; validation will happen in the plugin manager
-    plugin_configuration = load_yaml_file(file_plugin_config)
-    
-    # build the plugin manager 
-    plugin_manager = PluginManager()
-    
-    plugin_manager.plugin_path = PATH_APP_PLUGINS
-    plugin_manager.config_path = PATH_APP_CONFIG
-    plugin_manager.base_schema_file = FNAME_PLUGIN_MANAGER_SCHEMA
-    plugin_manager.plugin_schema_file = FNAME_PLUGIN_SCHEMA
-    try:
-        plugin_manager.config = app_configuration
-    except ValueError as e:
-        msg = f"Configuration file error: {e}"
-        logger.error(msg)
-        # do something to bail out and stop loading here
-    logger.debug(f'plugin manager config:\n{plugin_manager.config}')
-
-
-    # add the plugins based on the loaded configurations
-    plugin_manager.add_plugins(plugin_configuration[KEY_PLUGIN_DICT])
-
-    ### TEMPORARILY DISABLED
-
-    ## validate and load the plugins
-    # plugin_manager.load_plugins()
-
-    ### TEMPORARILY DISABLED
-    
-    set_config(app_configuration, scope='app')
-    start_http_server(port=daemon_http_port)
-
-    # Start the daemon loop in a dedicated thread after setting config and launching HTTP server
-    daemon_thread = threading.Thread(target=daemon_loop, daemon=True)
+    # Start the daemon loop in a dedicated thread after setting config
+    daemon_thread = threading.Thread(target=daemon_loop, args=(controller,), daemon=True)
     daemon_thread.start()
     daemon_thread.join()
 
@@ -221,7 +173,7 @@ def main():
 # +
 test_args = [
              # ('-d', None), 
-             ('-c', '~/.config/com.txoof.paperpi/paperpi_config.yaml'), 
+             #('-c', '~/.config/com.txoof.paperpi/paperpi_config.yaml'), 
              # ('-p', '~/.config/com.txoof.paperpi/plugins_config.yaml')
             ]
 
