@@ -15,4 +15,4 @@ The daemon URL is injected here to allow dynamic configuration and
 communication with the PaperPi daemon API.
 """
 
-app = create_app('http://localhost:2822')
+app = create_app()

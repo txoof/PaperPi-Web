@@ -14,17 +14,17 @@
 
 # +
 from fastapi import FastAPI
+# from paperpi.web.settings import Settings
 from paperpi.web.routes import config
 import httpx
 
-_daemon_api_url = None
+from pydantic_settings import BaseSettings
 
-def set_daemon_url(url: str):
-    global _daemon_api_url
-    _daemon_api_url = url
+class Settings(BaseSettings):
+    daemon_url: str = 'http://localhost:2822'
 
-def get_daemon_url() -> str:
-    return _daemon_api_url
+def get_settings() -> Settings:
+    return Settings()
 
 async def fetch_app_config():
     """
@@ -47,7 +47,7 @@ async def fetch_app_config():
         return response.json()
 
 
-def create_app(daemon_url: str = 'http://localhost:2822') -> FastAPI:
+def create_app() -> FastAPI:
     """
     Create and configure a FastAPI application instance for the PaperPi web interface.
 
@@ -55,14 +55,11 @@ def create_app(daemon_url: str = 'http://localhost:2822') -> FastAPI:
     and other data from the PaperPi daemon. It then initializes the FastAPI app, attaches
     the application's routes, and returns the app instance.
 
-    Args:
-        daemon_url (str): The base URL of the running PaperPi daemon used by internal API calls.
-                          Defaults to 'http://localhost:2822'.
-
     Returns:
         FastAPI: A configured FastAPI application instance ready to run.
     """
-    set_daemon_url(daemon_url)
+    settings = Settings()
+    
     app = FastAPI()
     app.include_router(config.router)
     return app

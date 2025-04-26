@@ -7,7 +7,7 @@ import signal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from paperpi.library.config_utils import validate_config, load_yaml_file, check_config_problems
+from paperpi.library.config_utils import validate_config, load_yaml_file, check_config_problems, make_json_safe
 from paperpi.library.plugin_manager import PluginManager
 from paperpi.constants import KEY_APPLICATION_SCHEMA, KEY_PLUGIN_DICT
 
@@ -31,8 +31,12 @@ class DaemonController:
     def set_config(self, config: dict, scope: str = 'app'):
         self.config_store[scope] = config
 
-    def get_config(self, scope: str = 'app'):
-        return self.config_store.get(scope, {})
+    def get_config(self, scope: str = None):
+        if not scope:
+            logger.debug(self.config_store)
+            return make_json_safe(self.config_store)
+        else:
+            return make_json_safe(self.config_store.get(scope, {}))
 
 class DaemonRequestHandler(BaseHTTPRequestHandler):
     """
@@ -43,8 +47,12 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         """
         Handle GET requests using a dynamic route dispatcher.
         """
+        # Route /config/{scope} dynamically
+        if self.path.startswith('/config/'):
+            self.handle_config_scope()
+            return
+
         self.routes = {
-            '/config/app': self.handle_config_app,
             '/shutdown': self.handle_shutdown,
             '/reload': self.handle_reload,
             '/status': self.handle_status,
@@ -84,6 +92,55 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
                 "description": doc
             })
         self.send_json(help_data)
+        
+    def handle_config_scope(self):
+        """
+        Returns configuration based on the scope in the path, like /config/app or /config/plugin_config.
+        """
+        path = self.path.strip('/')
+        parts = path.split('/')
+        logger.debug(f'Dynamically returning configuration based on path {path}; parts: {parts}')
+
+        err_msg = None
+
+        if len(parts) == 2 and parts[0] == 'config':
+            scope = parts[1]
+            config = self.server.controller.get_config(scope)
+            if not config:
+                err_msg = {'error': f'Scope "{scope}" not found'}
+        elif len(parts) == 1 and parts[0] == 'config':
+            scope = None
+            config = self.server.controller.get_config()
+            if not config:
+                err_msg = {'error': 'No configuration found'}
+        else:
+            scope = None
+            config = None
+            err_msg = {'error': 'Invalid request'}
+
+        if config:
+            self.send_json(config)
+        elif err_msg:
+            self.send_json(err_msg, status=404)
+        else:
+            self.send_json({'error': 'Failed to execute request'}, status=404)
+
+        # if len(parts) >= 3 and parts[1] == 'config':
+        #     scope = parts[2]
+        #     config = self.server.controller.get_config(scope)
+        #     if config:
+        #         self.send_json(config)
+        #     else:
+        #         self.send_json({'error': f'Scope "{scope}" not found'}, status=404)
+        # elif len(parts) == 2 and parts[1] == 'config':
+        #     config = self.server.controller.get_config()
+        #     if config:
+        #         self.send_json(config)
+        #     else:
+        #         self.send_json({'error': f'No configuration found!'}, status=404)
+            
+        # else:
+        #     self.send_json({'error': 'Invalid config request'}, status=400)
 
     def handle_config_app(self):
         """
@@ -281,3 +338,4 @@ def reload_config(controller):
         return
 
     controller.set_config(app_configuration, scope='app')
+

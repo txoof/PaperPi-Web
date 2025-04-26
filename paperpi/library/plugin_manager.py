@@ -12,10 +12,10 @@
 #     name: paperpi-web-venv-33529be2c6
 # ---
 
+# Enable automatic module reloading during development
 # %load_ext autoreload
 # %autoreload 2
 
-# +
 from pathlib import Path
 import logging
 import yaml
@@ -27,10 +27,6 @@ import hashlib
 import importlib.util
 import sys
 from time import monotonic
-
-
-
-# -
 
 try:
     # from .exceptions import PluginError, ImageError, PluginTimeoutError, FileError, ConfigurationError
@@ -52,9 +48,16 @@ logger = logging.getLogger(__name__)
 
 def validate_path(func):
     """
-    Decorator to validate that the path is either a Path-like or None.
-    Converts str -> Path if needed.
-    Raises TypeError if invalid.
+    Decorator to validate that a value is a Path-like object or None.
+
+    Converts strings to Path objects if necessary. Raises a TypeError if the value 
+    is neither a string, a Path, nor None.
+
+    Args:
+        func (function): The setter function to wrap.
+
+    Returns:
+        function: A wrapped function that ensures the value is a Path or None.
     """
     def wrapper(self, value):
         path_name = func.__name__
@@ -77,11 +80,10 @@ def validate_path(func):
 
 class PluginManager:
     """
-    Manages loading, configuration, and lifecycle of plugins.
-    
-    This class can optionally validate its own `config` against a base schema,
-    stored in a YAML file, if `base_schema_file` is provided. It also supports
-    caching schema files to avoid repeated disk reads.
+    Manages the loading, configuration, activation, and lifecycle of plugins.
+
+    Supports plugin schema validation, plugin instantiation, update cycles,
+    foreground switching, and caching of schema files.
     """
     ACTIVE = 'active'
     DORMANT = 'dormant'
@@ -102,14 +104,42 @@ class PluginManager:
         max_plugin_failures: int = 5,
     ):
         """
-        Initialize the PluginManager with optional config, paths, and a base schema.
+        Initialize the PluginManager with optional paths, config, and schema support.
 
         Args:
-            config (dict, optional): Base configuration for the manager. If None, an empty dict is used.
-            plugin_path (Path or None): Directory containing plugin subdirectories.
-            config_path (Path or None): Directory containing YAML schema files (and possibly other configs).
-            base_schema_file (str or None): Filename of the base schema for validating `self.config`.
-            max_plugin_failures (int): Consecutive plugin failures allowed before disabling a plugin.
+            plugin_path (Optional[Path]): Directory containing plugin subdirectories.
+            config_path (Optional[Path]): Directory containing YAML schema/config files.
+            config (Optional[dict]): Initial base configuration dictionary.
+            base_schema_file (Optional[str]): Filename for the base schema to validate manager config.
+            plugin_schema_file (Optional[str]): Filename for validating plugin configurations.
+            plugin_param_filename (Optional[str]): Filename for per-plugin parameter schemas.
+            max_plugin_failures (int): Maximum number of allowed consecutive plugin update failures.
+
+        Example:
+    
+        # Load plugin configuration from a YAML file
+        from library.config_utils import load_yaml_file
+    
+        pc_file = '/path/to/paperpi_plugins.yaml'
+        plugin_config_data = load_yaml_file(pc_file)
+    
+        # Initialize the PluginManager
+        manager = PluginManager(
+            plugin_path='../plugins/',
+            config_path='../config/',
+            base_schema_file='../config/plugin_manager_schema.yaml',
+            plugin_schema_file='plugin_schema.yaml'
+        )
+    
+        # Set manager configuration
+        manager.config = {
+            'screen_mode': 'L',
+            'resolution': (800, 600),
+        }
+    
+        # Add plugins from loaded configuration
+        manager.add_plugins(plugin_config_data['plugins'])
+
         """
         # Use property setters for path validations
         self.plugin_path = plugin_path
@@ -156,9 +186,6 @@ class PluginManager:
         
         logger.info("PluginManager initialized.")
 
-
-    
-    
     # SCHEMA LOADING
     def load_schema(self, schema_file: str, cache: bool = True) -> dict:
         """
@@ -207,6 +234,19 @@ class PluginManager:
 
     @staticmethod
     def validate_config(config: dict, schema: dict) -> dict:
+        """
+        Validate a configuration dictionary against a schema.
+
+        Args:
+            config (dict): The configuration dictionary to validate.
+            schema (dict): The schema dictionary describing expected keys and rules.
+
+        Returns:
+            dict: A validated and merged configuration dictionary.
+
+        Raises:
+            ValueError: If the configuration does not match the schema.
+        """
         # thin wrapper
         return validate_config(config, schema)
     # def validate_config(config: dict, schema: dict) -> dict:
@@ -302,16 +342,24 @@ class PluginManager:
     @property
     def config(self) -> dict:
         """
-        Access the manager's config dictionary (already validated if base_schema_file was provided).
+        Get the validated base configuration for the plugin manager.
+
+        Returns:
+            dict: The plugin manager's current configuration.
         """
         return self._config
 
     @config.setter
     def config(self, value: dict):
         """
-        Set (and possibly validate) the manager's base config.
+        Set the plugin manager's base configuration, validating it against the base schema if available.
 
-        If `base_schema_file` is defined, load and validate. Otherwise, store as-is.
+        Args:
+            value (dict): The new configuration dictionary.
+
+        Raises:
+            TypeError: If the provided value is not a dictionary.
+            Exception: If validation against the base schema fails.
         """
         if not isinstance(value, dict):
             raise TypeError("Config must be a dictionary.")
@@ -334,41 +382,74 @@ class PluginManager:
     @property
     def plugin_path(self) -> Optional[Path]:
         """
-        Directory containing plugin subdirectories.
+        Get the directory path where plugin subdirectories are located.
 
         Returns:
-            Path or None
+            Optional[Path]: The path to the plugin directory, or None if unset.
         """
         return getattr(self, "_plugin_path", None)
 
     @plugin_path.setter
     @validate_path
     def plugin_path(self, value):
+        """
+        Set the directory containing plugin subdirectories.
+
+        Args:
+            value (Union[str, Path, None]): Path to the plugin directory.
+
+        Raises:
+            TypeError: If the provided value is not a string, Path, or None.
+        """
         self._plugin_path = value
         logger.debug(f"plugin_path set to {value}")
 
     @property
     def config_path(self) -> Optional[Path]:
         """
-        Directory containing the YAML schema files and other configurations.
+        Get the directory path where configuration and schema files are located.
 
         Returns:
-            Path or None
+            Optional[Path]: The path to the configuration directory, or None if unset.
         """
         return getattr(self, "_config_path", None)
 
     @config_path.setter
     @validate_path
     def config_path(self, value):
+        """
+        Set the directory path for configuration and schema files.
+
+        Args:
+            value (Union[str, Path, None]): Path to the configuration directory.
+
+        Raises:
+            TypeError: If the provided value is not a string, Path, or None.
+        """
         self._config_path = value
         logger.debug(f"config_path set to {value}")
 
     @property
     def base_schema_file(self):
+        """
+        Get the base schema file path for manager configuration validation.
+
+        Returns:
+            Optional[Path]: Path to the base schema file, or None if not set.
+        """
         return self._base_schema_file
 
     @base_schema_file.setter
     def base_schema_file(self, value):
+        """
+        Set the base schema file used for validating manager configuration.
+
+        Args:
+            value (Union[str, Path, None]): Filename of the base schema.
+
+        Raises:
+            FileNotFoundError: If the schema file does not exist at the expected location.
+        """
         self._base_schema_file = value
 
         if not value or not self.config_path:
@@ -382,10 +463,25 @@ class PluginManager:
 
     @property
     def plugin_schema_file(self):
+        """
+        Get the plugin schema file path used for validating plugin configurations.
+
+        Returns:
+            Optional[Path]: Path to the plugin schema file, or None if not set.
+        """
         return self._plugin_schema_file
     
     @plugin_schema_file.setter
     def plugin_schema_file(self, value):
+        """
+        Set the plugin schema file used for validating plugin configurations.
+
+        Args:
+            value (Union[str, Path, None]): Filename of the plugin schema.
+
+        Raises:
+            FileNotFoundError: If the plugin schema file does not exist and is not cached.
+        """
         # Store the raw value initially
         self._plugin_schema_file = value
         
@@ -412,17 +508,12 @@ class PluginManager:
     @property
     def configured_plugins(self) -> List[dict]:
         """
-        A list of plugin configurations that have been set. Each entry is expected
-        to contain at least:
-        
-            {
-                'plugin': <plugin_name_str>,
-                'plugin_config': {...}
-                ...
-            }
+        Get the list of plugin configurations currently set.
+
+        Each entry should contain at minimum 'plugin' and 'plugin_config' keys.
 
         Returns:
-            list of dicts: The user-defined plugin config structures.
+            List[dict]: A list of plugin configuration dictionaries.
         """
         return self._configured_plugins
 
@@ -430,12 +521,15 @@ class PluginManager:
     def configured_plugins(self, plugins: List[dict]):
         """
         Set or replace the entire list of plugin configuration entries.
-        Performs minimal validation that each entry is a dict with
-        'plugin' and 'base_config'.
+
+        Validates that each entry is a dictionary containing 'plugin' and 'base_config' keys.
+
+        Args:
+            plugins (List[dict]): List of plugin configuration dictionaries.
 
         Raises:
-            TypeError: If `plugins` is not a list of dicts.
-            ValueError: If any plugin dict is missing required keys.
+            TypeError: If the input is not a list of dictionaries.
+            ValueError: If any dictionary is missing required keys.
         """
         if not plugins:
             logger.debug("No plugin configurations provided. Clearing list.")
@@ -460,6 +554,20 @@ class PluginManager:
         
     # PLUGIN LIFE-CYCLE AND UPDATING
     def add_plugin(self, plugin_config: dict, force_duplicate: bool = False):
+        """
+        Validate and add a single plugin configuration to the configured plugins list.
+
+        Args:
+            plugin_config (dict): Dictionary containing plugin configuration data.
+            force_duplicate (bool): If True, allows duplicate plugins with the same configuration.
+
+        Returns:
+            dict: The validated plugin configuration dictionary.
+
+        Raises:
+            FileNotFoundError: If the required plugin schema file does not exist.
+            ValueError: If plugin validation fails.
+        """
         if not self.plugin_schema_file:
             raise FileNotFoundError("Plugin schema is required, but is not set.")
     
@@ -542,14 +650,16 @@ class PluginManager:
 
     def add_plugins(self, plugin_configs: list[dict], force_duplicate: bool = False):
         """
-        Add multiple plugin configurations to the list of configured plugins.
-    
+        Add multiple plugin configurations at once.
+
+        Each configuration is validated individually. Failed additions are logged separately.
+
         Args:
-            plugin_configs (list[dict]): A list of plugin configurations to validate and add.
-            force_duplicate (bool): If True, allows duplicate plugins to be added.
-    
+            plugin_configs (List[dict]): List of plugin configuration dictionaries.
+            force_duplicate (bool): If True, allows adding duplicate configurations.
+
         Returns:
-            dict: A summary containing the number of successful and failed plugin additions.
+            dict: Summary dictionary with counts of added, failed, and duplicated plugins.
         """
         results = {
             'added': 0,
@@ -608,12 +718,12 @@ class PluginManager:
     def remove_plugin_config(self, uuid: str) -> bool:
         """
         Remove a plugin configuration by its UUID.
-    
+
         Args:
             uuid (str): The UUID of the plugin to remove.
-    
+
         Returns:
-            bool: True if the plugin was removed, False if no match was found.
+            bool: True if the plugin was removed, False if no matching UUID was found.
         """
         for i, plugin in enumerate(self.configured_plugins):
             if plugin.get('uuid') == uuid:
@@ -626,10 +736,15 @@ class PluginManager:
         
     def activate_plugin_by_uuid(self, uuid: str, status: str, reason = None) -> bool:
         """
-        Activate a configured plugin by UUID and set its status as active or dormant
+        Activate a configured plugin by UUID and set its status as active or dormant.
+
+        Args:
+            uuid (str): The UUID of the plugin to activate.
+            status (str): Desired status, either 'active' or 'dormant'.
+            reason (Optional[str]): Reason for activation (default: 'Activated by UUID').
 
         Returns:
-            bool: True if successfully activated
+            bool: True if the plugin was successfully activated, False otherwise.
         """
         success = False
         if not status in (self.ACTIVE, self.DORMANT):
@@ -657,10 +772,12 @@ class PluginManager:
         Deactivate a plugin instance by UUID from the active or dormant lists.
 
         Args:
-            uuid (str): The UUID of the plugin to remove.
+            uuid (str): The UUID of the plugin to deactivate.
+            status (Optional[str]): Status to assign after deactivation (default: 'deactivated').
+            reason (Optional[str]): Reason for deactivation.
 
         Returns:
-            bool: True if a plugin instance was removed, False if no match was found.
+            bool: True if the plugin was successfully deactivated, False otherwise.
         """
         success = False
         if not status:
@@ -715,7 +832,17 @@ class PluginManager:
         return False
     
     def plugin_config_signature(self, plugin_config: dict) -> str:
-        """Generate a hash signature of a plugin config, ignoring transient fields."""
+        """
+        Generate a consistent hash signature of a plugin configuration.
+
+        Ignores transient fields like UUID and status that should not affect configuration equivalence.
+
+        Args:
+            plugin_config (dict): Plugin configuration dictionary.
+
+        Returns:
+            str: MD5 hash string representing the plugin configuration.
+        """
         cfg = dict(plugin_config)
     
         # Ensure deep copy to avoid modifying the original
@@ -732,15 +859,15 @@ class PluginManager:
 
     def load_plugin(self, entry: dict) -> Optional[BasePlugin]:
         """
-        Load a single plugin based on its configuration entry.
-    
+        Load a single plugin from its configuration entry.
+
+        Dynamically imports the plugin module, loads the layout, and constructs a BasePlugin instance.
+
         Args:
             entry (dict): A single plugin config entry from self.configured_plugins.
-    
+
         Returns:
-            BasePlugin or None:
-                - Returns a newly constructed BasePlugin if successful.
-                - Returns None if we skip/ fail. (In that case, the function updates `entry["plugin_status"]`.)
+            Optional[BasePlugin]: Instantiated plugin if successful, None if loading fails.
         """
         plugin_status_info = entry.get("plugin_status", {})
         status = plugin_status_info.get("status", "").lower()
@@ -831,16 +958,10 @@ class PluginManager:
 
     def load_plugins(self) -> None:
         """
-        Fresh load all configured active/dormant plugins based on 
-        self.configured_plugins entries.
-    
-        Clears out any existing active/dormant plugin references in
-        self.active_plugins, self.dormant_plugins, and tries to load
-        each plugin via load_plugin().
-    
-        If a plugin is loaded successfully, updates plugin_status in the
-        config entry and places it into the appropriate list.
-        If any failure occurs, plugin_status is updated to 'load_failed'.
+        Fresh load all configured active/dormant plugins based on configured entries.
+
+        Clears existing active and dormant plugin references, then attempts to load each configured plugin.
+        Updates plugin status depending on whether loading succeeds or fails.
         """
         # Clear old references
         self.active_plugins.clear()
@@ -875,7 +996,11 @@ class PluginManager:
         )
 
     def _pick_next_active_plugin(self):
-        """Select the next plugin from the active_plugins property in round-robin order"""
+        """
+        Select the next plugin from the active_plugins list in round-robin order.
+
+        Resets the active index if out of bounds and updates the foreground plugin.
+        """
 
         if not self.active_plugins:
             self.foreground_plugin = None
@@ -900,10 +1025,14 @@ class PluginManager:
 
     def _safe_plugin_update(self, plugin, force=False):
         """
-        Safely update a plugin, handling exceptions and failure counts.
+        Safely attempt to update a plugin, handling exceptions and failure thresholds.
+
+        Args:
+            plugin (BasePlugin): The plugin instance to update.
+            force (bool): Whether to force the update.
 
         Returns:
-            dict: update status of plugin
+            dict: Update status result from the plugin.
         """
         success = {}
         uuid = plugin.uuid
@@ -936,8 +1065,11 @@ class PluginManager:
 
     def list_plugins(self):
         """
-        List plugins based on type
+        List all plugins grouped by their status.
 
+        Returns:
+            dict: A dictionary categorizing plugins by 'active', 'dormant', or 'other' statuses,
+                  with each entry containing plugin details like name, UUID, and status.
         """
         plugin_dict ={}
         for p in self.configured_plugins:
@@ -958,16 +1090,16 @@ class PluginManager:
                                 'plugin_status': plugin_status}
             
         return plugin_dict
-    
+        
     def update_cycle(self, force_update: bool = False, force_cycle: bool = False) -> None:
         """
-        Method for updating plugins and foregrounding active plugins.
-        This method cycles through active and dormant plugins, updating them
-        and adjusting which plugin is actively displayed.
-        
+        Update and manage the foreground and dormant plugins during a display cycle.
+
+        Forces updates or cycling when requested, handles plugin failures, and foreground switches.
+
         Args:
-            force_update (bool): Force update for all plugins regardless of readiness.
-            force_cycle (bool): Force cycling to the next active plugin.
+            force_update (bool): Force updates for all plugins, even if not ready.
+            force_cycle (bool): Force switching to the next plugin regardless of display timer.
         """
         logger.info(f"Starting plugin update cycle - force_update: {force_update}, force_cycle: {force_cycle}")
         update_success = False
@@ -1033,16 +1165,69 @@ class PluginManager:
 
     def clear_cache(self, force: bool = False):
         """
-        Expire old documents from each plugin's cache based on the schedule for each plugin
+        Clear or expire cached documents for all active and dormant plugins.
 
         Args:
-            force (bool): When true, remove all cahced documents
-
-        Returns:
-            None
+            force (bool): If True, forcibly clear all cached documents; otherwise, only expire old files.
         """
         for plugin in self.active_plugins + self.dormant_plugins:
             logger.info(f"{'Forcing cache clear' if force else 'Expiring old files'} for {plugin.name}...")
             plugin.clear_cache(all_files=force)
+
+# +
+# # Configure logging for standalone module testing
+# import logging
+
+# # Configure the root logger globally
+# logging.basicConfig(
+#     level=logging.DEBUG,  # Set root level
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+# )
+
+# logger = logging.getLogger(__name__)
+# logger.debug('foo')
+
+# import sys
+# from pathlib import Path
+
+# # Manually point to your project root
+# PROJECT_ROOT = Path.cwd().parent  # adjust this if needed
+# sys.path.append(str(PROJECT_ROOT))
+
+# from library.config_utils import load_yaml_file
+
+# pc_file = '/home/pi/.config/com.txoof.paperpi/paperpi_plugins.yaml'
+# pc = load_yaml_file(pc_file)
+
+# pc
+
+# p = PluginManager(plugin_path='../plugins/',
+#                   config_path='../config/',
+#                   base_schema_file='../config/plugin_manager_schema.yaml',
+#                   plugin_schema_file='plugin_schema.yaml'
+#                  )
+
+# pc
+
+# p.config = {
+#     'screen_mode': 'L',
+#     'resolution': (800, 600),
+# }
+# p.add_plugins(pc['plugins'])
+
+# p.list_plugins()
+
+# p.config
+
+# p.configured_plugins
+
+# p.load_plugins()
+
+# p.update_cycle()
+
+# p.foreground_plugin.update(force=True)
+# p.foreground_plugin.image
+
+# -
 
 
