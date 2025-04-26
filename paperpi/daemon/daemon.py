@@ -123,7 +123,7 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
 
     def handle_config_check(self):
         """
-        Accepts a posted configuration dictionary and returns validation issues.
+        Accepts a posted configuration dictionary and returns validation issues, if any.
         """
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length)
