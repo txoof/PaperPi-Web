@@ -129,12 +129,28 @@ def main():
     
     file_app_schema = PATH_APP_CONFIG / FNAME_APPLICATION_SCHEMA
 
+    file_plugin_schema = PATH_APP_CONFIG / FNAME_PLUGIN_SCHEMA
+
+    file_pluginmanager_schema = PATH_APP_CONFIG / FNAME_PLUGIN_MANAGER_SCHEMA
+    
+    key_plugin_dict = KEY_PLUGIN_DICT
+
+    file_daemon_pid = PATH_PID / FILENAME_PID
+
+    path_app_plugins = PATH_APP_PLUGINS
+
 
     configuration_files = {
         'file_app_config': file_app_config,
         'file_plugin_config': file_plugin_config,
         'file_app_schema': file_app_schema,
-        'key_application_schema': KEY_APPLICATION_SCHEMA
+        'key_application_schema': KEY_APPLICATION_SCHEMA,
+        'file_plugin_schema': file_plugin_schema,
+        'file_pluginmanager_schema': file_pluginmanager_schema,
+        'key_plugin_dict': key_plugin_dict,
+        'file_daemon_pid': file_daemon_pid,
+        'path_app_plugins': path_app_config
+
     }
     
     # load the application configuration 
