@@ -48,7 +48,7 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         Handle GET requests using a dynamic route dispatcher.
         """
         # Route /config/{scope} dynamically
-        if self.path.startswith('/config/'):
+        if self.path.startswith('/config'):
             self.handle_config_scope()
             return
 
@@ -57,6 +57,7 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
             '/reload': self.handle_reload,
             '/status': self.handle_status,
             '/check_config': self.handle_config_check,
+            '/config': self.handle_config_scope,
             '/': self.handle_help,
         }
 
@@ -95,7 +96,8 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         
     def handle_config_scope(self):
         """
-        Returns configuration based on the scope in the path, like /config/app or /config/plugin_config.
+        Returns configuration based on the scope in the path, like /config/app or /config/plugin_config. 
+        The /config/ route returns all scopes.
         """
         path = self.path.strip('/')
         parts = path.split('/')
@@ -338,4 +340,5 @@ def reload_config(controller):
         return
 
     controller.set_config(app_configuration, scope='app')
+    controller.set_config({}, scope='plugin_config')
 
