@@ -48,6 +48,11 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         """
         Handle GET requests using a dynamic route dispatcher.
         """
+        # Route /plugins dynamically
+        if self.path.startswith('/plugins'):
+            self.handle_plugins_scope()
+            return
+
         # Route /config/{scope} dynamically
         if self.path.startswith('/config'):
             self.handle_config_scope()
@@ -59,6 +64,7 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
             '/status': self.handle_status,
             '/check_config': self.handle_config_check,
             '/config': self.handle_config_scope,
+            '/plugins': self.handle_plugins_summary,
             '/': self.handle_help,
         }
 
@@ -87,12 +93,29 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         Returns a JSON list of available HTTP endpoints and their descriptions.
         """
         help_data = []
+
+        # Static routes
         for path, handler in self.routes.items():
             doc = handler.__doc__.strip() if handler.__doc__ else "No description provided."
             help_data.append({
                 "path": path,
                 "description": doc
             })
+
+        # Dynamic plugin routes
+        dynamic_plugin_routes = {
+            "/plugins": self.handle_plugins_summary,
+            "/plugins/active": self.handle_plugins_active,
+            "/plugins/configured": self.handle_plugins_configured
+        }
+
+        for path, handler in dynamic_plugin_routes.items():
+            doc = handler.__doc__.strip() if handler.__doc__ else "No description provided."
+            help_data.append({
+                "path": path,
+                "description": doc
+            })
+
         self.send_json(help_data)
         
     def handle_config_scope(self):
@@ -127,23 +150,6 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
             self.send_json(err_msg, status=404)
         else:
             self.send_json({'error': 'Failed to execute request'}, status=404)
-
-        # if len(parts) >= 3 and parts[1] == 'config':
-        #     scope = parts[2]
-        #     config = self.server.controller.get_config(scope)
-        #     if config:
-        #         self.send_json(config)
-        #     else:
-        #         self.send_json({'error': f'Scope "{scope}" not found'}, status=404)
-        # elif len(parts) == 2 and parts[1] == 'config':
-        #     config = self.server.controller.get_config()
-        #     if config:
-        #         self.send_json(config)
-        #     else:
-        #         self.send_json({'error': f'No configuration found!'}, status=404)
-            
-        # else:
-        #     self.send_json({'error': 'Invalid config request'}, status=400)
 
     def handle_config_app(self):
         """
@@ -204,7 +210,6 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         problems = check_config_problems(submitted_config, schema, strict=True)
         self.send_json({'problems': problems})
 
-
     def send_json(self, data, status=200):
         data_with_server_info = {
             "data": data,
@@ -217,7 +222,42 @@ class DaemonRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data_with_server_info, indent=2).encode('utf-8'))
 
+    def handle_plugins_summary(self):
+        """
+        Returns a summary list of active, dormant, and other plugins.
+        """
+        plugin_summary = self.server.controller.plugin_manager.list_plugins()
+        self.send_json(plugin_summary)
 
+    def handle_plugins_active(self):
+        """
+        Returns a list of currently active plugins.
+        """
+        active_plugins = [plugin.uuid for plugin in self.server.controller.plugin_manager.active_plugins]
+        self.send_json(active_plugins)
+
+    def handle_plugins_configured(self):
+        """
+        Returns a list of all configured plugins.
+        """
+        configured_plugins = self.server.controller.plugin_manager.configured_plugins
+        self.send_json(configured_plugins)
+
+    def handle_plugins_scope(self):
+        """
+        Dispatch sub-paths under /plugins for specific plugin views.
+        """
+        path = self.path.strip('/')
+        parts = path.split('/')
+
+        if len(parts) == 1 and parts[0] == 'plugins':
+            self.handle_plugins_summary()
+        elif len(parts) == 2 and parts[1] == 'active':
+            self.handle_plugins_active()
+        elif len(parts) == 2 and parts[1] == 'configured':
+            self.handle_plugins_configured()
+        else:
+            self.send_json({'error': 'Invalid plugins request'}, status=400)
 
 class DaemonHTTPServer(HTTPServer):
     def __init__(self, server_address, RequestHandlerClass, controller):
@@ -241,11 +281,15 @@ def daemon_loop(controller):
     It runs until controller.running is False or a reload is requested.
     """
     logger.info("Daemon loop started.")
+    # Load configuration before starting HTTP server
+    reload_config(controller)
     logger.debug(f"Daemon configuration store: {controller.config_store}")
 
     if not controller.http_api_running:
         start_http_server(controller=controller, port=controller.config_store['app']['daemon_http_port'])
         controller.http_api_running = True
+    
+    
     
     while controller.running:
         if controller.reload_requested:
@@ -259,7 +303,7 @@ def daemon_loop(controller):
                     controller.server = None
                 start_http_server(controller=controller, port=new_port)
             else:
-                logger.info("Port did not change; continuing with current HTTP server.")
+                logger.debug("Port did not change; continuing with current HTTP server.")
 
             controller.reload_requested = False
             daemon_loop(controller)
@@ -345,20 +389,24 @@ def reload_config(controller):
     # controller.set_config({}, scope='plugin_config')
     file_pluginmanager_schema = controller.get_config('configuration_files').get('file_pluginmanager_schema')
     file_plugin_schema = controller.get_config('configuration_files').get('file_plugin_schema')
+    file_plugin_config = controller.get_config('configuration_files').get('file_plugin_config')
     key_plugin_dict = controller.get_config('configuration_files').get('key_plugin_dict')
     path_app_plugins = controller.get_config('configuration_files').get('path_app_plugins')
     path_config = Path(file_plugin_schema).parent
 
     try:
-        plugin_configuration = load_yaml_file(file_plugin_config)
-        logger.debug(f'plugin_configuration: {plugin_configuration}')
+        pluginmanager_configuration = load_yaml_file(file_plugin_config)
+        logger.debug(f'plugin_configuration: {pluginmanager_configuration}')
     except (FileNotFoundError, ValueError) as e:
         logger.error(f'Failed to load plugin configuration file: {e}')
         logger.error('Shutting down daemon due to invalid plugin configuration.')
         controller.stop()
         return
 
-    controller.set_config(plugin_configuration, scope='plugin_config')
+    pluginmanager_configuration['resolution'] = (800, 600)
+    pluginmanager_configuration['screen_mode'] = 'L'
+
+    controller.set_config(pluginmanager_configuration, scope='plugin_config')
 
     controller.plugin_manager = PluginManager(
         plugin_path=path_app_plugins,
@@ -368,3 +416,4 @@ def reload_config(controller):
     )
     
 
+    controller.plugin_manager.add_plugins(pluginmanager_configuration.get(key_plugin_dict, []))
