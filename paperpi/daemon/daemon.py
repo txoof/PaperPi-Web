@@ -21,6 +21,7 @@ class DaemonController:
         self.server = None
         self.current_port = None
         self.http_api_running = False
+        self.plugin_manager = PluginManager()
 
     def stop(self):
         self.running = False
@@ -339,6 +340,31 @@ def reload_config(controller):
         controller.stop()
         return
 
+    logger.info('Setting up PluginManager')
     controller.set_config(app_configuration, scope='app')
-    controller.set_config({}, scope='plugin_config')
+    # controller.set_config({}, scope='plugin_config')
+    file_pluginmanager_schema = controller.get_config('configuration_files').get('file_pluginmanager_schema')
+    file_plugin_schema = controller.get_config('configuration_files').get('file_plugin_schema')
+    key_plugin_dict = controller.get_config('configuration_files').get('key_plugin_dict')
+    path_app_plugins = controller.get_config('configuration_files').get('path_app_plugins')
+    path_config = Path(file_plugin_schema).parent
+
+    try:
+        plugin_configuration = load_yaml_file(file_plugin_config)
+        logger.debug(f'plugin_configuration: {plugin_configuration}')
+    except (FileNotFoundError, ValueError) as e:
+        logger.error(f'Failed to load plugin configuration file: {e}')
+        logger.error('Shutting down daemon due to invalid plugin configuration.')
+        controller.stop()
+        return
+
+    controller.set_config(plugin_configuration, scope='plugin_config')
+
+    controller.plugin_manager = PluginManager(
+        plugin_path=path_app_plugins,
+        config_path=path_config,
+        base_schema_file=file_pluginmanager_schema,
+        plugin_schema_file=file_plugin_schema
+    )
+    
 

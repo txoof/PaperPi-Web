@@ -6,6 +6,7 @@ PATH_APP_CONFIG = Path(__file__).parent / "config"
 PATH_APP_PLUGINS = Path(__file__).parent / "plugins"
 PATH_DAEMON_CONFIG = Path("/etc/paperpi/")
 PATH_USER_CONFIG = Path("~/.config/com.txoof.paperpi/").expanduser().resolve()
+PATH_PID = Path("/tmp/")
 
 
 
@@ -22,7 +23,7 @@ KEY_APPLICATION_SCHEMA = 'main'
 KEY_PLUGIN_DICT = 'plugins'
 
 # PID for daemon mode
-PID_FILE = "/tmp/paperpi_daemon.pid"
+FILENAME_PID = "paperpi_daemon.pid"
 
 
 # # Location of user on-demand mode files
