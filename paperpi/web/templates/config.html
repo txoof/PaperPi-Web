@@ -8,60 +8,40 @@
 <body>
     <main>
         <h1>PaperPi Configuration</h1>
-        <button id="editButton">Edit</button>
-        <button id="saveButton" style="display: none;">Save</button>
 
-        <form id="configForm">
+        <form id="configForm" method="post" action="/config/check_app">
             {% for item in config_items %}
                 <div class="config-entry">
                     <label for="{{ item.key }}"><strong>{{ item.key }}</strong></label><br>
-                    <span id="display-{{ item.key }}">{{ item.value }}</span>
-                    <input type="text" id="input-{{ item.key }}" name="{{ item.key }}" value="{{ item.value }}" style="display: none;"><br>
+
+                    {% set rules = schema.get(item.key, {}) %}
+                    {% if rules.allowed %}
+                        <select name="{{ item.key }}" id="{{ item.key }}" {% if result and result.problems and item.key in result.problems %}style="border: 2px solid red;"{% endif %}>
+                            {% for val in rules.allowed %}
+                                <option value="{{ val }}" {% if val == item.value %}selected{% endif %}>{{ val }}</option>
+                            {% endfor %}
+                        </select>
+                    {% elif rules.type == 'bool' %}
+                        <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" {% if item.value %}checked{% endif %} {% if result and result.problems and item.key in result.problems %}style="outline: 2px solid red;"{% endif %}>
+                    {% else %}
+                        <input type="text" id="{{ item.key }}" name="{{ item.key }}" value="{{ item.value }}" {% if result and result.problems and item.key in result.problems %}style="border: 2px solid red;"{% endif %}>
+                    {% endif %}
+
+                    <br>
                     <small><em>{{ item.description }}</em></small><br>
                     <small><strong>Default:</strong> {{ item.default }}</small>
+                    {% if result and result.problems and item.key in result.problems %}
+                        <div style="color: red;"><strong>Error:</strong> {{ result.problems[item.key].message }}</div>
+                        <div style="color: green;"><strong>Suggested:</strong> {{ result.problems[item.key].suggested_default }}</div>
+                    {% endif %}
                 </div>
                 <br>
             {% endfor %}
+            <input type="submit" value="Submit Configuration">
         </form>
 
         <div id="response"></div>
     </main>
 
-    <script>
-    const editButton = document.getElementById('editButton');
-    const saveButton = document.getElementById('saveButton');
-    const form = document.getElementById('configForm');
-
-    editButton.addEventListener('click', () => {
-        editButton.style.display = 'none';
-        saveButton.style.display = 'inline';
-        form.querySelectorAll('input').forEach(input => input.style.display = 'inline');
-        form.querySelectorAll('span').forEach(span => span.style.display = 'none');
-    });
-
-    saveButton.addEventListener('click', async (event) => {
-        event.preventDefault();
-        const formData = new FormData(form);
-        const formObject = {};
-        formData.forEach((value, key) => {
-            formObject[key] = value;
-        });
-
-        try {
-            const response = await fetch('/config/check', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(formObject),
-            });
-
-            const result = await response.json();
-            document.getElementById('response').innerText = JSON.stringify(result, null, 2);
-        } catch (error) {
-            document.getElementById('response').innerText = 'Error submitting configuration: ' + error;
-        }
-    });
-    </script>
 </body>
 </html>

@@ -31,7 +31,7 @@ def setup_logging(level=logging.INFO):
 
     # Create a console handler
     handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=DATE_FORMAT)
+    formatter = logging.Formatter(fmt='%(asctime)s - %(levelname)s - %(module)s - %(message)s', datefmt=DATE_FORMAT)
     handler.setFormatter(formatter)
     
     # Attach the handler to the root logger

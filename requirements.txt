@@ -1,0 +1,3 @@
+git+https://github.com/waveshare/e-Paper.git#egg=waveshare_epd&subdirectory=RaspberryPi_JetsonNano/python
+epdlib
+spidev

@@ -16,9 +16,34 @@ import yaml
 from pathlib import Path
 import logging
 import shutil
+import collections.abc
 
 logger = logging.getLogger(__name__)
 
+
+def deep_merge(a, b):
+    """
+    Recursively merge dictionary `b` into dictionary `a`.
+
+    If both `a` and `b` contain a key with a dictionary as its value,
+    those dictionaries are merged recursively. Otherwise, the value from `b`
+    overrides the value in `a`.
+
+    Args:
+        a (dict): The base dictionary.
+        b (dict): The dictionary whose values should be merged into `a`.
+
+    Returns:
+        dict: A new dictionary containing the merged keys and values.
+    """
+    result = a.copy()
+    for k, v in b.items():
+        if (k in result and isinstance(result[k], dict)
+                and isinstance(v, collections.abc.Mapping)):
+            result[k] = deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
 
 def check_config_problems(config: dict, schema: dict, strict: bool = True) -> dict:
     """
@@ -51,7 +76,7 @@ def check_config_problems(config: dict, schema: dict, strict: bool = True) -> di
                     "error": "missing_required",
                     "expected": expected_type.__name__,
                     "suggested_default": default_val,
-                    "message": f"'{key}' is required but missing. Suggested default: {default_val}. {description}"
+                    "message": f"'{key}' is required, but missing. Suggested default: {default_val}. {description}"
                 }
             continue
 
@@ -116,12 +141,14 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
     validated_config = {}
     errors = []
 
+    logger.debug('Checking config against schema...')
     for key, rules in schema.items():
         default_val = rules.get('default')
         required = rules.get('required', False)
         allowed = rules.get('allowed')
         value_range = rules.get('range', None)
         description = rules.get('description', 'No description provided')
+
 
         try:
             expected_type = eval(rules.get('type', 'str'))
@@ -138,10 +165,17 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
             continue
 
         value = config[key]
+        logger.debug(f'{key}: {value}')
+        logger.debug(f'rules:{rules}')
 
         if not isinstance(value, expected_type):
+            expected_names = (
+                ', '.join(t.__name__ for t in expected_type)
+                if isinstance(expected_type, tuple)
+                else expected_type.__name__
+            )
             errors.append(
-                f"'{key}' must be of type {expected_type.__name__}, got {type(value).__name__}."
+                f"'{key}' must be of type {expected_names}, got {type(value).__name__}."
             )
             validated_config[key] = default_val
             continue

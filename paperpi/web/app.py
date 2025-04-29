@@ -1,30 +1,7 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: light
-#       format_version: '1.5'
-#       jupytext_version: 1.16.4
-#   kernelspec:
-#     display_name: Python (PaperPi-Web-venv-33529be2c6)
-#     language: python
-#     name: paperpi-web-venv-33529be2c6
-# ---
-
-# +
 from fastapi import FastAPI
-# from paperpi.web.settings import Settings
 from paperpi.web.routes import config
+from paperpi.web.settings import get_settings, Settings  # moved from app.py to settings.py
 import httpx
-
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    daemon_url: str = 'http://localhost:2822'
-
-def get_settings() -> Settings:
-    return Settings()
 
 async def fetch_app_config():
     """
@@ -46,20 +23,13 @@ async def fetch_app_config():
         response.raise_for_status()
         return response.json()
 
-
 def create_app() -> FastAPI:
     """
-    Create and configure a FastAPI application instance for the PaperPi web interface.
-
-    This function sets the daemon API URL used internally by routes to fetch configuration
-    and other data from the PaperPi daemon. It then initializes the FastAPI app, attaches
-    the application's routes, and returns the app instance.
+    Create and configure the FastAPI app instance.
 
     Returns:
-        FastAPI: A configured FastAPI application instance ready to run.
+        FastAPI: The configured FastAPI application.
     """
-    settings = Settings()
-    
     app = FastAPI()
     app.include_router(config.router)
     return app

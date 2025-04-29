@@ -28,13 +28,13 @@ from pathlib import Path
 import uvicorn
 
 
-from paperpi.constants import * 
+from .constants import * 
 
 # from library.base_plugin import BasePlugin
-from paperpi.library.config_utils import validate_config, load_yaml_file, write_yaml_file
-from paperpi.library.plugin_manager import PluginManager
-from paperpi.daemon.daemon import DaemonController, daemon_loop, load_configuration
-from paperpi.logging_setup import setup_logging
+from .library.config_utils import load_yaml_file
+from .daemon.daemon import daemon_loop
+from .daemon.controller import DaemonController
+from .logging_setup import setup_logging
 
 
 logger = setup_logging()
@@ -82,11 +82,15 @@ def parse_args():
 def cleanup(msg: str = None):
     if msg:
         print(msg)
+        exit = 1
+    else:
+        exit = 0
 
-    sys.exit(0)
+    sys.exit(exit)
 
 
 def main():
+
     controller = DaemonController()
 
     # Register our signal handlers
@@ -149,15 +153,24 @@ def main():
         'file_pluginmanager_schema': file_pluginmanager_schema,
         'key_plugin_dict': key_plugin_dict,
         'file_daemon_pid': file_daemon_pid,
-        'path_app_plugins': path_app_config
+        'path_app_plugins': path_app_plugins
 
     }
     
-    # load the application configuration 
     try:
-        app_configuration = load_configuration(file_app_config, file_app_schema, KEY_APPLICATION_SCHEMA)
-    except (ValueError, FileNotFoundError) as e:
-        cleanup(f'Failed to load configuration: {e}')    
+        app_configuration = load_yaml_file(file_app_config)
+    except (FileNotFoundError, ValueError) as e:
+        msg = f'Failed to load base configuration file: {e}'
+        logger.error(msg)
+        cleanup(msg)
+    
+    app_configuration = app_configuration.get(KEY_APPLICATION_SCHEMA)
+
+    # # load the application configuration 
+    # try:
+    #     app_configuration = load_configuration(file_app_config, file_app_schema, KEY_APPLICATION_SCHEMA)
+    # except (ValueError, FileNotFoundError) as e:
+    #     cleanup(f'Failed to load configuration: {e}')    
 
     # set to configuration file logging level if not set on the command line
     if not log_override:
@@ -165,10 +178,10 @@ def main():
     else:
         app_configuration['log_level'] = log_level
 
-    controller.set_config(app_configuration, scope='app')
+    
     controller.set_config(configuration_files, scope='configuration_files')
+    logger.debug(f'Controller.config_store: {controller.config_store}')
 
-    # Start the daemon loop in a dedicated thread after setting config
     daemon_thread = threading.Thread(target=daemon_loop, args=(controller,), daemon=True)
     daemon_thread.start()
     daemon_thread.join()
@@ -196,11 +209,14 @@ for key, value in test_args:
         sys.argv.append(key)
         if value is not None:
             sys.argv.append(value)
-print("ARGV ARE:")
-print(sys.argv) 
+# print("ARGV ARE:")
+# print(sys.argv) 
 # -
 
-sys.argv
+# sys.argv
 
 if __name__ == "__main__":
     main()
+
+def paperpi_main():
+    return main()

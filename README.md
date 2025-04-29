@@ -2,6 +2,11 @@
 
 Rewrite of PaperPi to support web configuration and customization
 
+
+## Basic Setup
+
+- `sudo raspi-config` > Interface Options > SPI > Enable SPI? [Yes]
+
 ## Developing for PaperPi
 
 ### Create a PyEnv

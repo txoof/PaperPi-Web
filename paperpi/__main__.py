@@ -2,4 +2,4 @@
 from paperpi import paperpi_main
 
 if __name__ == '__main__':
-    paperpi.main()
+    paperpi_main()

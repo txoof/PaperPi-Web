@@ -15,14 +15,15 @@ main:
         default: Unset
         required: true
         description: 'Type of display to use use. Use "HD" for all IT8951 based screens'
+        allowed: []
     vcom:
         type: float
         default: -1.0
         range: [-5.0, 0.0]
         description: 'Required HD screen VCOM value (see ribbon cable)'
     max_refresh:
-        type: int,
-        default: 4,
+        type: int
+        default: 4
         range: [0, 10]
         description: 'Maximum partial display refreshes prior to a full screen wipe for HD displays'
     log_level:
@@ -59,6 +60,7 @@ main:
     max_plugin_failures:
         type: int
         default: 5
+        range: [1, 100]
         description: 'Number of consecutive failures before a plugin is removed from the display loop. Use 0 for never.'
     resolution:
         description: 'Resolution provided by the current driver'
@@ -66,5 +68,6 @@ main:
     screen_mode:
         description: 'Screen display mode provided by the current driver. L: Grayscale; 1: Black/White'
         editable: False
+    
         
         
