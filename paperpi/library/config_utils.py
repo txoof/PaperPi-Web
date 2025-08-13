@@ -17,9 +17,11 @@ from pathlib import Path
 import logging
 import shutil
 import collections.abc
+from typing import Any, Dict, Tuple
+
+from epdlib.Screen import list_compatible_modules
 
 logger = logging.getLogger(__name__)
-
 
 def deep_merge(a, b):
     """
@@ -136,7 +138,7 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
         dict: A *merged* config with defaults applied.
 
     Raises:
-        ValueError: If validation fails for any required or type mismatch.
+        ValueError: If validation fails for any critical (fatal) schema items
     """
     validated_config = {}
     errors = []
@@ -148,6 +150,7 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
         allowed = rules.get('allowed')
         value_range = rules.get('range', None)
         description = rules.get('description', 'No description provided')
+        fatal = rules.get('fatal', False)
 
 
         try:
@@ -159,8 +162,11 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
         if key not in config:
             if required:
                 errors.append(
-                    f"'{key}' configuration key is required, but missing. Reasonable value: {default_val}. Description: {description}"
+                    {'key': key,
+                     'error': f"'{key}' configuration key is required, but missing. Reasonable value: {default_val}. Description: {description}",
+                     'fatal': fatal}
                 )
+            
             validated_config[key] = default_val
             continue
 
@@ -175,14 +181,18 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
                 else expected_type.__name__
             )
             errors.append(
-                f"'{key}' must be of type {expected_names}, got {type(value).__name__}."
+                {'key': key,
+                 'error': f"'{key}' must be of type {expected_names}, got {type(value).__name__}.", 
+                 'fatal': fatal}
             )
             validated_config[key] = default_val
             continue
 
         if allowed and value not in allowed:
             errors.append(
-                f"'{key}' must be one of {allowed}, got {value}."
+                {'key': key,
+                 'error': f"'{key}' must be one of {allowed}, got {value}.",
+                 'fatal': fatal}
             )
             validated_config[key] = default_val
             continue
@@ -191,7 +201,9 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
             min_val, max_val = value_range
             if not (min_val <= value <= max_val):
                 errors.append(
-                    f"'{key}' must be within the range {value_range}, got {value}."
+                 {'key': key,
+                  'error': f"'{key}' must be within the range {value_range}, got {value}.",
+                  'fatal': fatal}   
                 )
                 validated_config[key] = default_val
                 continue
@@ -211,12 +223,20 @@ def validate_config(config: dict, schema: dict, strict: bool = True) -> dict:
             validated_config[extra_key] = config[extra_key]
 
     if errors:
+        fatal = False
+        logger.warning('Configuration was not valid due to the following problems:')
         for e in errors:
-            logger.warning(e)
-        raise ValueError(f"Configuration validation failed: {errors}")
+            logger.warning(e['error'])
+            if e['fatal']:
+                logger.error(f'Fatal configuration error in {e["key"]}')
+                fatal = True
+            else:
+                logger.warning(f'A reasonable value for {e["key"]} was substituted.')
+        if fatal:
+            raise ValueError(f"Configuration validation failed: {errors}")
 
     logger.info("Configuration validated successfully.")
-    return validated_config
+    return validated_config, errors
 
 
 def load_yaml_file(filepath: str) -> dict:
@@ -295,6 +315,80 @@ def write_yaml_file(filepath: str, data: list, backup: bool = False, keep: int =
     except Exception as e:
         print(f"Failed to write YAML file: {e}")
         return False
+
+def update_yaml_file(filepath: str, changes: Dict[str, Any], *, backup: bool = True, keep: int = 2) -> Tuple[bool, Dict[str, Dict[str, Any]]]:
+    """
+    Update a YAML file on disk by applying only the changed keys from `changes`.
+
+    This function:
+      - Loads the existing YAML as a mapping (dict)
+      - Deep-merges `changes` into it
+      - Writes back to disk **only if** the merged result differs from the original
+      - Optionally rotates backups: file.yaml.1, file.yaml.2, ... (up to `keep`)
+
+    Notes:
+      - This uses PyYAML and will not preserve comments. If comment preservation
+        is needed, consider switching to `ruamel.yaml`.
+
+    Args:
+        filepath: Path to the YAML file to update.
+        changes: Dict of updates to apply (only provided keys are updated).
+        backup: If True, create a rotated backup before writing.
+        keep: Number of rotated backups to retain (>=2 recommended).
+
+    Returns:
+        A tuple `(written, diff)` where:
+          - `written` indicates whether the file was actually changed and saved.
+          - `diff` is a shallow mapping of keys that changed: {key: {from, to}}.
+    """
+    path = Path(filepath).expanduser().resolve()
+
+    # Load existing YAML (require mapping at top level)
+    if path.exists():
+        original = load_yaml_file(str(path))
+        if not isinstance(original, dict):
+            raise ValueError(f"YAML at {path} must be a mapping at the top level")
+    else:
+        original = {}
+
+    # Merge changes (deep)
+    merged = deep_merge(original, changes or {})
+
+    # Compute shallow diff of top-level keys to decide whether to write
+    diff: Dict[str, Dict[str, Any]] = {}
+    for k, new_v in merged.items():
+        old_v = original.get(k)
+        if old_v != new_v:
+            diff[k] = {"from": old_v, "to": new_v}
+
+    if not diff:
+        logger.info(f"No changes detected for {path}; not writing.")
+        return False, {}
+
+    # Ensure parent directory exists
+    if not path.parent.exists():
+        raise FileNotFoundError(f"Directory does not exist: {path.parent}")
+
+    # Optional backup rotation
+    if backup:
+        for i in reversed(range(1, keep)):
+            older = path.with_suffix(path.suffix + f".{i}")
+            newer = path.with_suffix(path.suffix + f".{i+1}")
+            if older.exists():
+                older.rename(newer)
+        backup_file = path.with_suffix(path.suffix + ".1")
+        if path.exists():
+            shutil.copy2(path, backup_file)
+
+    # Write merged mapping
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            yaml.safe_dump(merged, f, sort_keys=False, allow_unicode=True)
+        logger.info(f"Updated YAML written to {path}")
+        return True, diff
+    except Exception as e:
+        logger.error(f"Failed to write updated YAML: {e}")
+        return False, {}
 
 def make_json_safe(obj):
     """

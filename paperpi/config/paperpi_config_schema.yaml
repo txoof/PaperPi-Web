@@ -1,21 +1,28 @@
 # schema file for validating PaperPi configuration
+
+schema_information: 
+    description: 'Schema for validating PaperPi configuration'
+    version: 0.3
+
 main:
     web_port:
         type: int
         default: 2693
         range: [2000, 65000]
         description: 'Port on which to run the web interface'
+        fatal: true
     daemon_http_port:
         type: int
         default: 2822
         range: [2000, 65000]
         description: 'Port on which to run the daemon HTTP API interface'
+        fatal: true
     display_type:
         type: str
         default: Unset
         required: true
         description: 'Type of display to use use. Use "HD" for all IT8951 based screens'
-        allowed: []
+        allowed: "${DISPLAY_TYPES}"
     vcom:
         type: float
         default: -1.0
@@ -64,10 +71,13 @@ main:
         description: 'Number of consecutive failures before a plugin is removed from the display loop. Use 0 for never.'
     resolution:
         description: 'Resolution provided by the current driver'
-        editable: False
+        editable: false
     screen_mode:
+        type: str
+        allowed: ["1", "L", "RGB"]
+        default: "1"
         description: 'Screen display mode provided by the current driver. L: Grayscale; 1: Black/White'
-        editable: False
+        editable: false
     
         
         

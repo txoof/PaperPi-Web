@@ -33,3 +33,6 @@ def create_app() -> FastAPI:
     app = FastAPI()
     app.include_router(config.router)
     return app
+
+# Expose a module-level app for `uvicorn paperpi.web.app:app`
+app = create_app()

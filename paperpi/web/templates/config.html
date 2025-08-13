@@ -18,13 +18,20 @@
                     {% if rules.allowed %}
                         <select name="{{ item.key }}" id="{{ item.key }}" {% if result and result.problems and item.key in result.problems %}style="border: 2px solid red;"{% endif %}>
                             {% for val in rules.allowed %}
-                                <option value="{{ val }}" {% if val == item.value %}selected{% endif %}>{{ val }}</option>
+                                <option value="{{ (val | string | lower) if (val is boolean) else val }}" {% if val == item.value or (val is boolean and (val and item.value in ['true', true]) or ((not val) and item.value in ['false', false])) %}selected{% endif %}>{{ val }}</option>
                             {% endfor %}
                         </select>
-                    {% elif rules.type == 'bool' %}
-                        <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" {% if item.value %}checked{% endif %} {% if result and result.problems and item.key in result.problems %}style="outline: 2px solid red;"{% endif %}>
+                    {% elif rules.type and rules.type|lower in ['bool','boolean'] %}
+                        <!-- Always submit a value for booleans: hidden false + checkbox true -->
+                        <input type="hidden" name="{{ item.key }}" value="false">
+                        <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" value="true" {% if item.value %}checked{% endif %} {% if result and result.problems and item.key in result.problems %}style="outline: 2px solid red;"{% endif %}>
                     {% else %}
-                        <input type="text" id="{{ item.key }}" name="{{ item.key }}" value="{{ item.value }}" {% if result and result.problems and item.key in result.problems %}style="border: 2px solid red;"{% endif %}>
+                        {% if rules.allowed is defined and rules.allowed == [true, false] %}
+                            <input type="hidden" name="{{ item.key }}" value="false">
+                            <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" value="true" {% if item.value %}checked{% endif %} {% if result and result.problems and item.key in result.problems %}style="outline: 2px solid red;"{% endif %}>
+                        {% else %}
+                            <input type="text" id="{{ item.key }}" name="{{ item.key }}" value="{{ item.value }}" {% if result and result.problems and item.key in result.problems %}style="border: 2px solid red;"{% endif %}>
+                        {% endif %}
                     {% endif %}
 
                     <br>

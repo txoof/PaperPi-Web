@@ -1,4 +1,8 @@
 # schema for validating main configuration for plugin manager and all plugins
+schema_information: 
+    description: 'Schema for validating main configuration for plugin manager and all plugins'
+    version: 0.1
+
 screen_mode:
     type: str
     default: '1'
