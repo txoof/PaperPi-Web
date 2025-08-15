@@ -36,11 +36,17 @@ class RootHandler(BaseHTTPRequestHandler):
         
         # Attempt to match route prefixes (e.g., /config/app handled by /config)
         if not route_func:
-            logger.debug('searching for prefixed route...')
+            logger.debug('searching for prefixed route (longest match)...')
+            best_func = None
+            best_len = -1
             for route_prefix, func in ROUTE_REGISTRY.items():
-                if self.path.startswith(route_prefix + '/'):
-                    route_func = func
-                    break
+                prefix = route_prefix.rstrip('/')        # normalize
+                if self.path.startswith(prefix + '/'):
+                    if len(prefix) > best_len:
+                        best_len = len(prefix)
+                        best_func = func
+            if best_func is not None:
+                route_func = best_func
         
         if route_func:
             try:
