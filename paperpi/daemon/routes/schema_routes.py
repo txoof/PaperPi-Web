@@ -35,6 +35,37 @@ def handle_schema_index(handler, controller):
         # Expect prefixes '/schema' or '/schema/'
         tail = path[len('/schema'):].lstrip('/') if path.startswith('/schema') else ''
 
+        # Name-based access: /schema/app (or /schema/application)
+        if tail in ('app', 'application'):
+            try:
+                schemas = (controller.config_store or {}).get('schemas', {})
+                effective = schemas.get('application_effective')
+                if not isinstance(effective, dict):
+                    handler.send_response(HTTPStatus.NOT_FOUND)
+                    handler.send_header('Content-Type', 'application/json')
+                    handler.end_headers()
+                    handler.wfile.write(json.dumps({'error': 'Effective application schema not available'}).encode())
+                    return
+
+                payload = {
+                    'data': {
+                        'name': 'app',
+                        'schema': effective,
+                    }
+                }
+                handler.send_response(HTTPStatus.OK)
+                handler.send_header('Content-Type', 'application/json')
+                handler.end_headers()
+                handler.wfile.write(json.dumps(payload, indent=2).encode())
+                return
+            except Exception as e:
+                logger.error('schema/app: unexpected error: %s', e, exc_info=True)
+                handler.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+                handler.send_header('Content-Type', 'application/json')
+                handler.end_headers()
+                handler.wfile.write(json.dumps({'error': f'Failed to serve application schema: {e}'}).encode())
+                return
+
         if not tail:
             # Index: list all schemas
             files = []
