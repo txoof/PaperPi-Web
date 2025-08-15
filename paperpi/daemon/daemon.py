@@ -34,6 +34,11 @@ def daemon_loop(controller: DaemonController) -> None:
         'schema_key' : config_files.get('key_application_schema', 'main')
     }
 
+    registry['configured_plugins'] = {
+        'config_file': config_files.get('file_plugin_config', ''),
+        'schema_key': config_files.get('key_plugin_dict', 'plugins')
+    }
+
     registry['plugin_base'] = {
         'schema_file': config_files.get('file_plugin_schema', ''),
     }
