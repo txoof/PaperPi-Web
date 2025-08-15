@@ -397,6 +397,64 @@ def handle_config_plugins(handler, controller):
         return _send_json(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {'error': f'Failed to read plugins: {e}'})
 
 
+# GET /config/configured_plugins handler
+def handle_configured_plugins(handler, controller):
+    """
+    GET /config/configured_plugins
+    Return the list of configured plugins loaded from the registry-mapped YAML file.
+
+    Resolution:
+      - controller.config_store['registry']['configured_plugins'] supplies:
+          - config_file: path to the plugins YAML
+          - schema_key: name of the list key (defaults to 'plugins')
+      - If the YAML is a list, return it directly.
+      - If it's a dict, return y[schema_key] when present, else [].
+    """
+    import json
+    from http import HTTPStatus
+    from paperpi.library.config_utils import load_yaml_file
+
+    store = controller.config_store or {}
+    registry = store.get('registry', {}) or {}
+    entry = registry.get('configured_plugins') or {}
+    cfg_file = entry.get('config_file')
+    key = entry.get('schema_key') or 'plugins'
+
+    if not cfg_file:
+        handler.send_response(HTTPStatus.NOT_FOUND)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'error': 'configured_plugins registry entry not set'}).encode())
+        return
+
+    try:
+        y = load_yaml_file(str(cfg_file))
+    except FileNotFoundError:
+        handler.send_response(HTTPStatus.NOT_FOUND)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'error': f'Plugin config file not found: {cfg_file}'}).encode())
+        return
+    except Exception as e:
+        handler.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'error': f'Failed to load plugin config: {e}'}).encode())
+        return
+
+    data = []
+    if isinstance(y, list):
+        data = y
+    elif isinstance(y, dict):
+        v = y.get(key, [])
+        data = v if isinstance(v, list) else []
+
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header('Content-Type', 'application/json')
+    handler.end_headers()
+    handler.wfile.write(json.dumps({'data': data}, indent=2, default=str).encode())
+
+
 # This dictionary maps URL paths to their corresponding route handler functions.
 # Each entry associates a specific route (e.g., '/status') with a function that
 # processes the request and generates the appropriate response.
@@ -411,8 +469,6 @@ ROUTES = {
     # Read config (index or by name)
     '/config/plugins': handle_config_plugins,
     '/config': handle_config_route,
+    '/config/configured_plugins': handle_configured_plugins,
 
-    # Back-compat endpoints
-    # '/check_config': handle_check_config,
-    # '/config/write_config': handle_write_config,
 }
