@@ -53,6 +53,22 @@ def daemon_loop(controller: DaemonController) -> None:
         schemas_bucket['application_raw'] = app_schema_raw
         schemas_bucket['application_effective'] = app_schema_effective
 
+        # Expose friendly aliases for schema access via /schema/<name>
+        # These map to cached, token-expanded schemas so we avoid re-reading files.
+        schema_aliases = controller.config_store.setdefault('schema_aliases', {})
+        schema_aliases.setdefault('app', {
+            'source': 'cache',
+            'cache_key': 'application_effective',
+        })
+        schema_aliases.setdefault('application', {
+            'source': 'cache',
+            'cache_key': 'application_effective',
+        })
+        schema_aliases.setdefault('plugins', {
+            'source': '',
+            'cache_key': ''
+        })
+
         # Validate config against effective schema
         validated_app_config, errors = validate_config(config=app_config, schema=app_schema_effective)
 
