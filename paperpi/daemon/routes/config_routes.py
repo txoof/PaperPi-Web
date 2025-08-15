@@ -350,6 +350,53 @@ def handle_write_config(handler, controller):
     handler.end_headers()
     handler.wfile.write(json.dumps(response, indent=2).encode())
 
+
+
+def handle_config_plugins(handler, controller):
+    """
+    GET /config/plugins
+
+    Return the list of configured plugin entries. Preference order:
+    1) controller.config_store['plugins'] if present and a list
+    2) Load from a registry entry named 'plugins' (using its config_file/schema_key)
+    3) [] if not available
+    """
+    try:
+        store = controller.config_store or {}
+
+        # 1) In-memory cache (preferred)
+        plugins = store.get('plugins')
+        if isinstance(plugins, list):
+            return _send_json(handler, HTTPStatus.OK, {'data': plugins})
+
+        # 2) Registry fallback
+        reg_entry = _registry_lookup(controller, 'plugins')
+        data = []
+        if reg_entry:
+            try:
+                from paperpi.library.config_utils import load_yaml_file
+                cfg_file = reg_entry.get('config_file')
+                key = reg_entry.get('schema_key') or 'plugins'
+                if cfg_file:
+                    y = load_yaml_file(cfg_file)
+                    if isinstance(y, dict):
+                        # Allow either a top-level list, or namespaced under key
+                        if key in y and isinstance(y[key], list):
+                            data = y[key]
+                        elif isinstance(y.get('plugins'), list):
+                            data = y['plugins']
+                        elif isinstance(y.get('main'), dict) and isinstance(y['main'].get('plugins'), list):
+                            data = y['main']['plugins']
+            except Exception as e:
+                logger.error("/config/plugins: failed to load via registry: %s", e, exc_info=True)
+                # fall through to empty list
+
+        return _send_json(handler, HTTPStatus.OK, {'data': data})
+    except Exception as e:
+        logger.error("/config/plugins: unexpected error: %s", e, exc_info=True)
+        return _send_json(handler, HTTPStatus.INTERNAL_SERVER_ERROR, {'error': f'Failed to read plugins: {e}'})
+
+
 # This dictionary maps URL paths to their corresponding route handler functions.
 # Each entry associates a specific route (e.g., '/status') with a function that
 # processes the request and generates the appropriate response.
@@ -362,6 +409,7 @@ ROUTES = {
     '/config/write': handle_config_write_name,   # prefix route for /config/write/<name>
 
     # Read config (index or by name)
+    '/config/plugins': handle_config_plugins,
     '/config': handle_config_route,
 
     # Back-compat endpoints
