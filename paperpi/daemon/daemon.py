@@ -5,6 +5,7 @@ from paperpi.library.config_utils import load_yaml_file
 from paperpi.library.config_utils import validate_config
 from paperpi.library.schema_expand import REGISTRY, expand_tokens_in_schema
 from paperpi.providers.display_types import get_display_types
+from paperpi.constants import DAEMON_HTTP_PORT
 
 
 import logging
@@ -25,19 +26,35 @@ def daemon_loop(controller: DaemonController) -> None:
     config_files = controller.config_store.get('configuration_files', {})
     controller.set_config({'app_config': []}, scope='configuration_issues')
 
+    # Build a small in-memory registry so routes can resolve names generically
+    registry = controller.config_store.setdefault('registry', {})
+    registry['app'] = {
+        'config_file': config_files.get('file_app_config', ''),
+        'schema_file': config_files.get('file_app_schema', ''),
+        'schema_key' : config_files.get('key_application_schema', 'main')
+    }
 
-    file_app_config = config_files.get('file_app_config', '')
-    file_app_schema = config_files.get('file_app_schema', '')
+    file_app_config = registry['app']['config_file']
+    file_app_schema = registry['app']['schema_file']
+    key = registry['app']['schema_key']
+
     try:
-        app_config = load_yaml_file(file_app_config)
-        key = app_config.get('configuration_files', {}).get('key_application_schema', 'main')
-        app_config = app_config.get(key, {})
-        app_schema = load_yaml_file(file_app_schema)
-        app_schema = app_schema.get(key, {})
-        # expand tokens as needed based on registered substitutions
-        app_schema = expand_tokens_in_schema(app_schema)
+        # Load application config and select the namespaced section
+        app_config_full = load_yaml_file(file_app_config)
+        app_config = app_config_full.get(key, app_config_full) if isinstance(app_config_full, dict) else {}
 
-        validated_app_config, errors = validate_config(config=app_config, schema=app_schema)
+        # Load application schema (raw), select section, then expand tokens once
+        app_schema_full = load_yaml_file(file_app_schema)
+        app_schema_raw = app_schema_full.get(key, app_schema_full) if isinstance(app_schema_full, dict) else {}
+        app_schema_effective = expand_tokens_in_schema(app_schema_raw)
+
+        # Persist schemas for other routes to reuse
+        schemas_bucket = controller.config_store.setdefault('schemas', {})
+        schemas_bucket['application_raw'] = app_schema_raw
+        schemas_bucket['application_effective'] = app_schema_effective
+
+        # Validate config against effective schema
+        validated_app_config, errors = validate_config(config=app_config, schema=app_schema_effective)
 
 
         
@@ -62,10 +79,12 @@ def daemon_loop(controller: DaemonController) -> None:
     if errors:
         controller.config_store['configuration_issues']['app_config'] = errors
 
+    logger.info(f"App config loaded | key=%s | port=%s | problems=%d", key, controller.config_store.get('app', {}).get('daemon_http_port'), len(errors or {}))
+
     logger.debug(f'Controller.config_store: {controller.config_store}')
     controller.running = True
 
-    daemon_http_port = controller.config_store.get('app', {}).get('daemon_http_port')
+    daemon_http_port = controller.config_store.get('app', {}).get('daemon_http_port') or DAEMON_HTTP_PORT
     httpd = start_http_server(port=daemon_http_port, controller=controller)
     httpd.socket.settimeout(1.0)  # Avoid blocking forever on request
 
