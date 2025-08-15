@@ -162,8 +162,71 @@ def handle_schema_index(handler, controller):
         handler.wfile.write(json.dumps({'error': f'Unexpected error: {e}'}).encode())
 
 
-# Register routes for both /schema and /schema/
+def handle_schema_plugin_params(handler, controller):
+    """
+    GET /schema/plugin/<type>
+      -> return the plugin parameter schema for the given <type> as JSON, expanding tokens, excluding 'schema_information'
+    """
+    try:
+        raw_path = handler.path
+        path = urlparse(raw_path).path
+        # Expect prefix '/schema/plugin'
+        tail = path[len('/schema/plugin'):].lstrip('/') if path.startswith('/schema/plugin') else ''
+        plugin_type = tail
+        if not plugin_type or '/' in plugin_type or plugin_type.endswith('/') or '..' in plugin_type:
+            handler.send_response(HTTPStatus.NOT_FOUND)
+            handler.send_header('Content-Type', 'application/json')
+            handler.end_headers()
+            handler.wfile.write(json.dumps({'error': f'Plugin type not found: {plugin_type}'}).encode())
+            return
+        # Compose path: <path_app_plugins>/<type>/plugin_param_schema.yaml
+        # path_app_plugins = getattr(controller, "path_app_plugins", None)
+        files = (controller.config_store or {}).get('configuration_files', {}) or {}
+        path_app_plugins = files.get('path_app_plugins')
+        if not path_app_plugins:
+            handler.send_response(HTTPStatus.NOT_FOUND)
+            handler.send_header('Content-Type', 'application/json')
+            handler.end_headers()
+            handler.wfile.write(json.dumps({'error': 'Plugins path not configured'}).encode())
+            return
+        plugin_schema_path = Path(path_app_plugins) / plugin_type / "plugin_param_schema.yaml"
+        if not plugin_schema_path.exists() or not plugin_schema_path.is_file():
+            handler.send_response(HTTPStatus.NOT_FOUND)
+            handler.send_header('Content-Type', 'application/json')
+            handler.end_headers()
+            handler.wfile.write(json.dumps({'error': f'Plugin schema not found: {plugin_type}'}).encode())
+            return
+        try:
+            schema = load_yaml_file(str(plugin_schema_path))
+            schema = expand_tokens_in_schema(schema)
+        except Exception as e:
+            handler.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+            handler.send_header('Content-Type', 'application/json')
+            handler.end_headers()
+            handler.wfile.write(json.dumps({'error': f'Failed to load/expand plugin schema: {e}'}).encode())
+            return
+        if isinstance(schema, dict):
+            schema = {k: v for k, v in schema.items() if k != 'schema_information'}
+        payload = {
+            'data': {
+                'plugin_type': plugin_type,
+                'schema': schema,
+            }
+        }
+        handler.send_response(HTTPStatus.OK)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(json.dumps(payload, indent=2).encode())
+    except Exception as e:
+        handler.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+        handler.send_header('Content-Type', 'application/json')
+        handler.end_headers()
+        handler.wfile.write(json.dumps({'error': f'Unexpected error: {e}'}).encode())
+
+# Register routes for /schema, /schema/, /schema/plugin_base, /schema/plugin
 ROUTES = {
     "/schema": handle_schema_index,
     "/schema/": handle_schema_index,
+    # "/schema/plugin_base": handle_schema_plugin_base,
+    "/schema/plugin": handle_schema_plugin_params,  # /schema/plugin/<type> handled by parsing tail in function
 }
