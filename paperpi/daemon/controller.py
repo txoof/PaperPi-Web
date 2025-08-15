@@ -39,3 +39,24 @@ class DaemonController:
             dict: The configuration dictionary (empty if not set).
         """
         return self.config_store.get(scope, {})
+
+
+    def init_schema_aliases(self) -> None:
+        """Initialize friendly schema aliases in the config_store.
+
+        Aliases map human-friendly names used by /schema/<name> to concrete
+        sources:
+          - cache: use a cached schema under config_store['schemas'][cache_key]
+          - registry: resolve via config_store['registry'][name]
+        """
+        aliases = self.config_store.setdefault('schema_aliases', {})
+
+        # Application schema (token-expanded and cached during daemon startup)
+        aliases['app'] = {
+            'source': 'cache',
+            'cache_key': 'application_effective',
+        }
+        aliases['application'] = {
+            'source': 'cache',
+            'cache_key': 'application_effective',
+        }

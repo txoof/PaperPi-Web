@@ -34,6 +34,10 @@ def daemon_loop(controller: DaemonController) -> None:
         'schema_key' : config_files.get('key_application_schema', 'main')
     }
 
+    registry['plugin_base'] = {
+        'schema_file': config_files.get('file_plugin_schema', ''),
+    }
+
     file_app_config = registry['app']['config_file']
     file_app_schema = registry['app']['schema_file']
     key = registry['app']['schema_key']
@@ -53,21 +57,8 @@ def daemon_loop(controller: DaemonController) -> None:
         schemas_bucket['application_raw'] = app_schema_raw
         schemas_bucket['application_effective'] = app_schema_effective
 
-        # Expose friendly aliases for schema access via /schema/<name>
-        # These map to cached, token-expanded schemas so we avoid re-reading files.
-        schema_aliases = controller.config_store.setdefault('schema_aliases', {})
-        schema_aliases.setdefault('app', {
-            'source': 'cache',
-            'cache_key': 'application_effective',
-        })
-        schema_aliases.setdefault('application', {
-            'source': 'cache',
-            'cache_key': 'application_effective',
-        })
-        schema_aliases.setdefault('plugins', {
-            'source': '',
-            'cache_key': ''
-        })
+        # Initialize schema aliases (centralized in controller)
+        controller.init_schema_aliases()
 
         # Validate config against effective schema
         validated_app_config, errors = validate_config(config=app_config, schema=app_schema_effective)
