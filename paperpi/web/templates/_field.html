@@ -1,0 +1,8 @@
+{# Phase 1 stub: real macro comes in Phase 2 #}
+{% macro render_field(key, value, rules, result) -%}
+  <div>
+    <label><strong>{{ key }}</strong></label>
+    <div><code>value:</code> {{ value | default('') }}</div>
+    <div><code>rules:</code> {{ rules | default({}) }}</div>
+  </div>
+{%- endmacro %}

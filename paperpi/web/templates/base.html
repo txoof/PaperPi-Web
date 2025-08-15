@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{ title or "PaperPi Web" }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; }
+      header { margin-bottom: 1.5rem; }
+      .container { max-width: 900px; margin: 0 auto; }
+      nav a { margin-right: .75rem; text-decoration: none; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>PaperPi Web</h1>
+        <nav>
+          <a href="/">Home</a>
+          <a href="/config/app">App Config</a>
+        </nav>
+      </header>
+
+      <main class="card">
+        {% if content %}
+          <p>{{ content }}</p>
+        {% else %}
+          {% block content %}{% endblock %}
+        {% endif %}
+      </main>
+    </div>
+  </body>
+</html>

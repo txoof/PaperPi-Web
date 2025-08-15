@@ -1,54 +1,6 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>PaperPi Configuration</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body>
-    <main>
-        <h1>PaperPi Configuration</h1>
-
-        <form id="configForm" method="post" action="/config/check_app">
-            {% for item in config_items %}
-                <div class="config-entry">
-                    <label for="{{ item.key }}"><strong>{{ item.key }}</strong></label><br>
-
-                    {% set rules = schema.get(item.key, {}) %}
-                    {% if rules.allowed %}
-                        <select name="{{ item.key }}" id="{{ item.key }}" {% if result and result.problems and item.key in result.problems %}style="border: 2px solid red;"{% endif %}>
-                            {% for val in rules.allowed %}
-                                <option value="{{ (val | string | lower) if (val is boolean) else val }}" {% if val == item.value or (val is boolean and (val and item.value in ['true', true]) or ((not val) and item.value in ['false', false])) %}selected{% endif %}>{{ val }}</option>
-                            {% endfor %}
-                        </select>
-                    {% elif rules.type and rules.type|lower in ['bool','boolean'] %}
-                        <!-- Always submit a value for booleans: hidden false + checkbox true -->
-                        <input type="hidden" name="{{ item.key }}" value="false">
-                        <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" value="true" {% if item.value %}checked{% endif %} {% if result and result.problems and item.key in result.problems %}style="outline: 2px solid red;"{% endif %}>
-                    {% else %}
-                        {% if rules.allowed is defined and rules.allowed == [true, false] %}
-                            <input type="hidden" name="{{ item.key }}" value="false">
-                            <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" value="true" {% if item.value %}checked{% endif %} {% if result and result.problems and item.key in result.problems %}style="outline: 2px solid red;"{% endif %}>
-                        {% else %}
-                            <input type="text" id="{{ item.key }}" name="{{ item.key }}" value="{{ item.value }}" {% if result and result.problems and item.key in result.problems %}style="border: 2px solid red;"{% endif %}>
-                        {% endif %}
-                    {% endif %}
-
-                    <br>
-                    <small><em>{{ item.description }}</em></small><br>
-                    <small><strong>Default:</strong> {{ item.default }}</small>
-                    {% if result and result.problems and item.key in result.problems %}
-                        <div style="color: red;"><strong>Error:</strong> {{ result.problems[item.key].message }}</div>
-                        <div style="color: green;"><strong>Suggested:</strong> {{ result.problems[item.key].suggested_default }}</div>
-                    {% endif %}
-                </div>
-                <br>
-            {% endfor %}
-            <input type="submit" value="Submit Configuration">
-        </form>
-
-        <div id="response"></div>
-    </main>
-
-</body>
-</html>
+{% extends "base.html" %}
+{% block content %}
+  <h2>{{ title or "App Configuration" }}</h2>
+  <p>This is the Phase 1 shell. In Phase 2, this page will load the current app
+     config from the daemon, render fields, and allow validation & write.</p>
+{% endblock %}

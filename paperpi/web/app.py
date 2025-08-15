@@ -1,38 +1,44 @@
-from fastapi import FastAPI
-from paperpi.web.routes import config
-from paperpi.web.settings import get_settings, Settings  # moved from app.py to settings.py
-import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from pydantic_settings import BaseSettings
+import os
+from pathlib import Path
 
-async def fetch_app_config():
-    """
-    Fetch the current application configuration from the PaperPi daemon.
+# ---- Settings ---------------------------------------------------------------
 
-    This function sends an asynchronous HTTP GET request to the daemon's
-    internal API at http://localhost:2822/config/app and returns the parsed
-    JSON response as a dictionary.
+class Settings(BaseSettings):
+    daemon_url: str = os.getenv("DAEMON_URL", "http://localhost:2822")
 
-    Returns:
-        dict: The application configuration provided by the daemon.
+def get_settings() -> Settings:
+    return Settings()
 
-    Raises:
-        httpx.HTTPStatusError: If the request returns a non-2xx response.
-        httpx.RequestError: For network-related errors.
-    """
-    async with httpx.AsyncClient() as client:
-        response = await client.get('http://localhost:2822/config/app')
-        response.raise_for_status()
-        return response.json()
+# ---- App & Templates --------------------------------------------------------
 
-def create_app() -> FastAPI:
-    """
-    Create and configure the FastAPI app instance.
+app = FastAPI(title="PaperPi Web")
 
-    Returns:
-        FastAPI: The configured FastAPI application.
-    """
-    app = FastAPI()
-    app.include_router(config.router)
-    return app
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# Expose a module-level app for `uvicorn paperpi.web.app:app`
-app = create_app()
+# ---- Routes (minimal for Phase 1) ------------------------------------------
+
+@app.get("/health")
+async def health(settings: Settings = get_settings()):
+    # Simple health info, plus what daemon URL we’re configured to use
+    return JSONResponse({"status": "ok", "daemon_url": settings.daemon_url})
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    # Temporary landing page; in Phase 2 we’ll redirect to /config/app
+    return templates.TemplateResponse(
+        "base.html",
+        {"request": request, "title": "PaperPi Web", "content": "UI scaffold is running. Phase 2 coming next."},
+    )
+
+# Placeholder so you can see the “config page” shell renders
+@app.get("/config/app", response_class=HTMLResponse)
+async def config_app_shell(request: Request):
+    return templates.TemplateResponse(
+        "config.html",
+        {"request": request, "title": "App Configuration (Phase 1 shell)"},
+    )
