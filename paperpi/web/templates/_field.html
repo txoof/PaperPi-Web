@@ -1,8 +1,48 @@
-{# Phase 1 stub: real macro comes in Phase 2 #}
-{% macro render_field(key, value, rules, result) -%}
-  <div>
-    <label><strong>{{ key }}</strong></label>
-    <div><code>value:</code> {{ value | default('') }}</div>
-    <div><code>rules:</code> {{ rules | default({}) }}</div>
+{% macro render_field(item, rule, result) -%}
+  {% set key = item.key %}
+  {% set val = item.value %}
+  {% set problems = (result.problems if result and result.problems is defined else {}) %}
+  {% set has_error = (key in problems) %}
+
+  <div class="config-entry" style="margin-bottom: 1rem;">
+    <label for="{{ key }}"><strong>{{ key }}</strong></label><br>
+
+    {# Select if allowed is provided #}
+    {% if rule.allowed is defined and rule.allowed %}
+      <select name="{{ key }}" id="{{ key }}" {% if has_error %}style="border:2px solid red;"{% endif %}>
+        {% for choice in rule.allowed %}
+          {# stringify booleans to 'true'/'false' #}
+          {% set sval = ('true' if choice is sameas true else ('false' if choice is sameas false else choice)) %}
+          <option value="{{ sval }}" {% if sval == (val|string) %}selected{% endif %}>{{ choice }}</option>
+        {% endfor %}
+      </select>
+
+    {# Checkbox for booleans #}
+    {% elif rule.type and rule.type|lower in ['bool','boolean'] %}
+      <input type="hidden" name="{{ key }}" value="false">
+      <input type="checkbox" id="{{ key }}" name="{{ key }}" value="true"
+             {% if val %}checked{% endif %}
+             {% if has_error %}style="outline:2px solid red;"{% endif %}>
+
+    {# Default: text input #}
+    {% else %}
+      <input type="text" id="{{ key }}" name="{{ key }}" value="{{ val if val is not none else '' }}"
+             {% if has_error %}style="border:2px solid red;"{% endif %}>
+    {% endif %}
+
+    <br>
+    <small><em>{{ rule.description or 'No description available.' }}</em></small><br>
+    <small><strong>Default:</strong> {{ rule.default if 'default' in rule else 'No default available.' }}</small>
+
+    {% if has_error %}
+      <div style="color: red; margin-top: 4px;">
+        <strong>Error:</strong> {{ problems[key].message }}
+      </div>
+      {% if problems[key].suggested_default is defined and problems[key].suggested_default is not none %}
+      <div style="color: green;">
+        <strong>Suggested:</strong> {{ problems[key].suggested_default }}
+      </div>
+      {% endif %}
+    {% endif %}
   </div>
 {%- endmacro %}

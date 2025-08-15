@@ -1,6 +1,26 @@
 {% extends "base.html" %}
+{% from "_field.html" import render_field %}
 {% block content %}
   <h2>{{ title or "App Configuration" }}</h2>
-  <p>This is the Phase 1 shell. In Phase 2, this page will load the current app
-     config from the daemon, render fields, and allow validation & write.</p>
+
+  {% if result and result.message %}
+    <div style="padding:8px; margin:8px 0; border:1px solid #4caf50; background:#e8f5e9;">
+      {{ result.message }}
+    </div>
+  {% endif %}
+
+  <form method="post" action="/config/app/check">
+    {% for item in config_items %}
+      {% set rule = schema.get(item.key, {}) %}
+      {{ render_field(item, rule, result) }}
+    {% endfor %}
+
+    <input type="submit" value="Check Configuration">
+
+    {# Show Write only if no problems and something actually changed #}
+    {% if result and (result.problems is defined) and (result.problems|length == 0) and changed %}
+      <input type="hidden" name="payload_json" value='{{ payload_json }}'>
+      <input type="submit" formaction="/config/app/write" value="Write Configuration">
+    {% endif %}
+  </form>
 {% endblock %}
