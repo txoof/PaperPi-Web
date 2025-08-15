@@ -3,7 +3,7 @@ text_color:
   type: str
   default: WHITE
   allowed: [RED, ORANGE, YELLOW, GREEN, BLUE, BLACK, WHITE, random]
-bkround_color:
+bkground_color:
   description: 'Background color'
   type: str
   default: WHITE
