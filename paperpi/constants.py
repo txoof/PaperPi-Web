@@ -12,7 +12,7 @@ PATH_PID = Path("/tmp/")
 
 # Files
 FNAME_PLUGIN_MANAGER_SCHEMA = "plugin_manager_schema.yaml"
-FNAME_PLUGIN_SCHEMA = "plugin_schema.yaml"
+FNAME_PLUGIN_SCHEMA = "plugin_base_schema.yaml"
 FNAME_APPLICATION_SCHEMA = "paperpi_config_schema.yaml"
 
 FNAME_APPLICATION_CONFIG = "paperpi_config.yaml"
