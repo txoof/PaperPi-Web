@@ -81,15 +81,15 @@ class PluginManager():
             resp = requests.get(url, timeout=5)
             resp.raise_for_status()
         except requests.RequestException as e:
-            sef.logger.error(f"Failed to fetch configured plugins: {e}")
-            self._configured_plugins = []
+            self.logger.error(f"Failed to fetch configured plugins: {e}")
+            self.configured_plugins = []
             return
 
         data = resp.json().get("data", [])
         if not isinstance(data, list):
             self.logger.error("Invalid plugin configuration format provided by daemon")
             self.logger.debug(f"data:\n{data}")
-            self._configured_plugins = []
+            self.configured_plugins = []
 
         self.configured_plugins = data
         self.logger.debug(self.configured_plugins)
@@ -104,6 +104,7 @@ class PluginManager():
         - Validates `plugin_params` against the per-plugin schema at /schema/plugin/<type> (if present).
         - Returns a list of results: [{plugin, ok, problems:{plugin_config, plugin_params}}]
         """
+        unnamed_count = 0
         base_url = f"http://localhost:{self._daemon_port}"
 
         # Fetch base plugin schema once
@@ -112,20 +113,28 @@ class PluginManager():
             resp = requests.get(f"{base_url}/schema/plugin_base", timeout=5)
             if resp.status_code == 200:
                 payload = resp.json().get('data', {})
-                # If the schema is namespaced, prefer 'plugin_config' key
-                if isinstance(payload, dict) and 'plugin_config' in payload:
-                    base_schema = payload.get('plugin_config', {})
+                # Prefer the real rules map under 'schema'; fallback to 'plugin_config'
+                if isinstance(payload, dict) and isinstance(payload.get('schema'), dict):
+                    base_schema = payload['schema']
+                elif isinstance(payload, dict) and isinstance(payload.get('plugin_config'), dict):
+                    base_schema = payload['plugin_config']
                 else:
-                    base_schema = payload
+                    base_schema = {}
             else:
                 self.logger.warning("/schema/plugin_base returned %s", resp.status_code)
         except Exception as e:
             self.logger.error("Failed to fetch base plugin schema: %s", e, exc_info=True)
 
+        self.logger.debug(f'base_schema:\n{base_schema}')
+        
         results = []
         for entry in (self.configured_plugins or []):
             plugin_type = entry.get('plugin')
             cfg = entry.get('plugin_config', {}) or {}
+            name = cfg.get('name', '')
+            if not name:
+                name = f'{plugin_type}-{unnamed_count:03}'
+                unnamed_count += 1
             params = entry.get('plugin_params', {}) or {}
 
             problems = {}
@@ -162,7 +171,7 @@ class PluginManager():
 
             if isinstance(params_schema, dict) and params_schema:
                 try:
-                    p_params = check_config_problems(params, params_schema, strict=True)
+                    p_params = check_config_problems(params, params_schema, strict=False)
                     if p_params:
                         problems['plugin_params'] = p_params
                 except Exception as e:
@@ -171,6 +180,7 @@ class PluginManager():
 
             ok = not problems
             results.append({
+                'name': name,
                 'plugin': plugin_type,
                 'ok': ok,
                 'problems': problems,
@@ -202,7 +212,27 @@ p = PluginManager()
 p.configured_plugins
 
 # p.load_configured_plugins("http://localhost:2822")
-p.validate_config()
+r = p.validate_config()
 
+r
+
+base = {'schema': {'name': {'type': 'str', 'default': None, 'description': 'Human readable plugin identifier'}, 'duration': {'type': 'int', 'default': 120, 'description': 'Amount of time in seconds to display plugin'}, 'refresh_interval': {'type': 'int', 'default': 60, 'description': 'Amount of time in seconds between refreshing the data for this plugin'}, 'layout_name': {'type': 'str', 'default': 'layout', 'required': True, 'description': 'Layout to use for displaying plugin'}, 'cache_dir': {'type': '(str, None)', 'default': None, 'description': 'Location within the cache to store cached content for this plugin'}, 'force_onebit': {'type': 'bool', 'default': False}, 'screen_mode': {'type': 'str', 'default': 'L', 'allowed': ['1', 'L', 'RGB']}, 'dormant': {'type': 'bool', 'default': False, 'description': 'Dormant plugins only display when required (e.g. when Spotify is actively playing)'}}}
+config = {'plugin': 'word_clock',
+  'plugin_config': {'name': 'Word Clock 02',
+   'duration': 20,
+   'refresh_interval': 60,
+   'layout_name': 'layout'},
+  'plugin_params': {'foo': 'bar', 'spam': 7, 'username': 'Monty'}}
+
+
+
+params
+
+b_schema = base['schema']
+p_config = config['plugin_config']
+p_config['duration'] = 'cat'
+
+
+check_config_problems(p_config, b_schema)
 
 
