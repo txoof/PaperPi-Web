@@ -1,6 +1,6 @@
 # wordclock layouts
-import os
-dir_path = os.path.dirname(os.path.realpath(__file__))
+from paperpi.library.font_search import locate_path
+font_path = locate_path('fonts')
 
 word_clock_lg = {
   'wordtime':
@@ -15,7 +15,7 @@ word_clock_lg = {
           'vcenter': False,
           'rand': True,
           'relative': False,
-          'font': dir_path+'/../../fonts/Anton/Anton-Regular.ttf',
+          'font': font_path / 'Anton/Anton-Regular.ttf',
           'mode': 'L',
           'font_size': None,
           'rgb_support': True,
@@ -32,7 +32,7 @@ word_clock_lg = {
           'vcenter': False,
           'rand': True,
           'relative': ['time', 'wordtime'],
-          'font': dir_path+'/../../fonts/Anton/Anton-Regular.ttf',
+          'font': font_path / 'Anton/Anton-Regular.ttf',
           'mode': 'L',       
           'font_size': None,
           'rgb_support': True,
@@ -53,7 +53,7 @@ word_clock = {
           'vcenter': False,
           'rand': True,
           'relative': False,
-          'font': dir_path+'/../../fonts/Anton/Anton-Regular.ttf',
+          'font': font_path / 'Anton/Anton-Regular.ttf',
           'mode': 'L',
           'font_size': None,
           'rgb_support': True,
@@ -70,7 +70,7 @@ word_clock = {
           'vcenter': False,
           'rand': True,
           'relative': ['time', 'wordtime'],
-          'font': dir_path+'/../../fonts/Anton/Anton-Regular.ttf',
+          'font': font_path / 'Anton/Anton-Regular.ttf',
           'mode': 'L',          
           'font_size': None,
           'rgb_support': True,

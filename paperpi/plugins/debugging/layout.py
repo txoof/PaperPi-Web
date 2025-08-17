@@ -1,5 +1,7 @@
-import os
-dir_path = os.path.dirname(os.path.realpath(__file__))
+# debugging plugin layouts
+from paperpi.library.font_search 
+font_path = locate_path('fonts')
+
 
 
 # +
@@ -12,7 +14,7 @@ debugging_basic = {
         'height': 1/3,
         'abs_coordinates': (0, 0),
         'rand': False,
-        'font': dir_path+'/../../fonts/Kanit/Kanit-Medium.ttf',
+        'font': font_path / 'Kanit/Kanit-Medium.ttf',
         'fill': 'BLACK',
         'bkground': 'WHITE'
     },
@@ -25,7 +27,7 @@ debugging_basic = {
         'abs_coordinates': (0, None),
         'relative': ['crash_rate', 'title'],
         'rand': False,
-        'font': dir_path+'/../../fonts/Kanit/Kanit-Medium.ttf',
+        'font': font_path / 'Kanit/Kanit-Medium.ttf',
         'fill': 'BLACK',
         'bkground': 'WHITE'
     },
@@ -38,7 +40,7 @@ debugging_basic = {
         'abs_coordinates': (None, None),
         'relative': ['crash_rate', 'title'],
         'rand': False,
-        'font': dir_path+'/../../fonts/Kanit/Kanit-Medium.ttf',
+        'font': font_path / 'Kanit/Kanit-Medium.ttf',
         'fill': 'BLACK',
         'bkground': 'WHITE'
     },    
@@ -51,7 +53,7 @@ debugging_basic = {
         'abs_coordinates': (0, None),
         'relative': ['digit_time', 'crash_rate'],
         'rand': False,
-        'font': dir_path+'/../../fonts/Kanit/Kanit-Medium.ttf',
+        'font': font_path / 'Kanit/Kanit-Medium.ttf',
         'fill': 'BLACK',
         'bkground': 'WHITE'
     },

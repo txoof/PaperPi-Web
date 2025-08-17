@@ -1,7 +1,7 @@
 # basic clock layout
-import os
-dir_path = os.path.dirname(os.path.realpath(__file__))
+from paperpi.library.font_search import locate_path
 
+font_path = locate_path('fonts')
 
 basic_clock = {
     'digit_time': {
@@ -12,7 +12,7 @@ basic_clock = {
         'height': 1,
         'abs_coordinates': (0, 0),
         'rand': True,
-        'font': dir_path+'/../../fonts/Kanit/Kanit-Medium.ttf',
+        'font': font_path / 'Kanit/Kanit-Medium.ttf',
         'mode': 'L',
         'fill': 'BLACK',
         'bkground': 'WHITE'
