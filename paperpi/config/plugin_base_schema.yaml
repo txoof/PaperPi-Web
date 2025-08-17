@@ -1,7 +1,7 @@
 # schema for validating plugin configuration as they are loaded
 schema_information: 
     description: 'Schema for validating plugin configuration as they are loaded'
-    version: 0.1
+    version: 0.2
 
 name:
     type: str
