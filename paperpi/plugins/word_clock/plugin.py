@@ -14,12 +14,68 @@
 
 # %load_ext autoreload
 # %autoreload 2
+# # %cd /home/pi/src/PaperPi-Web
+
+# +
+#code snip that makes path work so package imports and relative imports work
+# both in jupyter and as a script
+
+import sys
+from pathlib import Path
+
+def in_notebook() -> bool:
+    try:
+        from IPython import get_ipython  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+def here_dir() -> Path:
+    # When executed as a script, __file__ exists
+    if '__file__' in globals():
+        return Path(__file__).resolve().parent
+    # In a notebook, fall back to the current working directory
+    return Path.cwd().resolve()
+
+def find_project_root(start: Path, markers=('pyproject.toml', 'setup.cfg', '.git', 'paperpi')):
+    cur = start
+    for _ in range(20):  # safety bound
+        # if any marker file or directory exists here, treat this as root
+        if any((cur / m).exists() for m in markers):
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return None
+
+# 1) Determine where we are
+_nb_or_script_dir = here_dir()
+
+# 2) Locate the project root by walking upward until we find a marker
+_project_root = find_project_root(_nb_or_script_dir)
+
+# 3) Add paths in the right order
+#    - Ensure local directory is first so 'import constants' resolves locally
+#    - Ensure project root is also present so package imports work
+paths_to_add = []
+if str(_nb_or_script_dir) not in sys.path:
+    paths_to_add.append(str(_nb_or_script_dir))
+if _project_root and str(_project_root) not in sys.path:
+    paths_to_add.append(str(_project_root))
+
+# Prepend to sys.path, preserving existing entries
+sys.path[:0] = paths_to_add
+
+
+# -
 
 import logging
 from datetime import datetime
 from random import choice
 from copy import deepcopy
-import sys
+
+
+from paperpi.library.base_plugin import BasePlugin
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +85,7 @@ except ImportError:
     import constants
 
 
-def time_list(time):
+def _time_list(time):
     '''Returns time as list [h, m] of type int
     
     Args:
@@ -37,12 +93,11 @@ def time_list(time):
     return  [int(i)  for i in time.split(':')]
 
 
-
-def time_now():
+def _time_now():
     return datetime.now().strftime("%H:%M")
 
 
-def map_val(a, b, s):
+def _map_val(a, b, s):
     '''map range `a` to `b` for value `s`
 
     Args:
@@ -59,78 +114,62 @@ def map_val(a, b, s):
     return round(t)
 
 
-def update_function(self, time=None, *args, **kwargs):
-    '''update function for word_clock provides time as text
-    
-    This plugin provides the time as a string such as:
-        * The time is around ten twenty
-        * It is about twenty after eight
-    
-    Args:
-        self(`namespace`)
-        time(`str`): time as a string in format HH:MM (primarily used for testing)
+class Plugin(BasePlugin):
+    """
+    Word Clock plugin: renders time as words.
+
+    Expects BasePlugin to provide:
+      - self.name
+      - self.screen_mode, self.layout (optional usage)
+      - any config/params via self.config / self.params if your BasePlugin exposes them
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        logger.info('Initing word_clock plugin instance')
         
-    Returns:
-        tuple:
-    %U'''
-    logger.info(f'update_function for {self.name}')
-    hours = constants.HOURS
-    minutes = constants.MINUTES
-    stems = constants.STEMS
-    
-    if time:
-        now = time
-        logger.debug(f'using {time}')
-        t_list = time_list(time)
-    else:
-        now = time_now()
-        logger.debug(f'using {now}')
-        t_list = time_list(now)
-        
-    # this range shifts the period of the list so times around the 'tens' round nicely up and down        
-    minute = map_val((1, 59), (0, 6), t_list[1])
+    def update_data(self, *, now: str | None = None, **kwargs) -> dict:
+        """
+        Provide the time as a word string such as:
+        - The time is around ten twenty
+        - It's about twenty after eight
 
-    # set the hour appropriately - from 'after' to 'til'
-    if t_list[1] <= 34:
-        hour_str = hours[str(t_list[0])]
-    else:
-        try:
-            hour_str = hours[str(t_list[0]+1)]
-        except KeyError as e:
-            # wrap around to zero'th index in the hours list
-            hour_str = hours[str(t_list[0]+1 - len(hours))]
-            hour_str = hours[str(0)]
-        
-    min_str = minutes[str(minute)]
-    
-    # properly organize the time string
-    # 'o clock times
-    if minute == 0 or minute == 6:
-        time_str = f'{choice(hour_str).title()} {choice(min_str).title()}'
-                      
-    else: 
-        time_str = f'{choice(min_str).title()} {choice(hour_str).title()}'
-    
-    
-    data = {'wordtime': f'{choice(stems)} {time_str}',
-              'time': now}    
+        Returns:
+            dict like {'data': {...}, 'success': True, 'high_priority': False}        
+        """
 
-    # if 'text_color' in self.config or 'bkground_color' in self.config:
-    #     logger.info('using user-defined colors')
-    #     colors = PluginTools.text_color(config=self.config, mode=self.screen_mode,
-    #                            default_text=self.layout.get('fill', 'WHITE'),
-    #                            default_bkground=self.layout.get('bkground', 'BLACK'))
+        logger.info(f'update_data for {self.name}')
+        hours = constants.HOURS
+        minutes = constants.MINUTES
+        stems = constants.STEMS
 
-    #     text_color = colors['text_color']
-    #     bkground_color = colors['bkground_color']
+        # allow injecting a time string for testing
+        use_time = now or _time_now()
+        t_list = _time_list(use_time)
+        logger.debug(f'using time: {use_time}')
 
+        # map minute into 0..6 bucket so we can say, "about ten", etc.
+        minute_bucket = _map_val((1, 59), (0, 6), t_list[1])
 
-    #     # set the colors
-    #     for section in self.layout:
-    #         if self.layout[section].get('rgb_support', False):
-    #             logger.debug(f'setting {section} layout colors to fill: {text_color}, bkground: {bkground_color}')
-    #             self.layout_obj.update_block_props(section, {'fill': text_color, 'bkground': bkground_color})
-    #         else:
-    #             logger.debug(f'section {section} does not support RGB colors')
-    
-    return {'data': data, 'success': True}
+        # choose hour: 0..34 -> current hour; 35..59 -> next hour (wrap at 24)
+        if t_list[1] <= 34:
+            hour_str_list = hours[str(t_list[0])]
+        else:
+            try:
+                hour_str_list = hours[str(t_list[0] + 1)]
+            except KeyError:
+                # wrap around to zeroth index in the hours list
+                hour_str_list = hours[str(0)]
+
+        min_str_list = minutes[str(minute_bucket)]
+
+        # build the time string
+        if minute_bucket in (0, 6): # o'clock
+            time_str = f"{choice(hour_str_list).title()} {choice(min_str_list).title()}"
+        else:
+            time_str = f"{choice(min_str_list).title()} {choice(hour_str_list).title()}"
+
+        data = {
+            "wordtime": f"{choice(stems)} {time_str}",
+            "time": use_time,
+        }
+        return {"data": data, "success": True, "high_priority": False}
