@@ -173,8 +173,14 @@ class BasePlugin(ABC):
             result = self.update_data(*args, **kwargs)
             
             data = result.get('data', {})
-            update_success = bool(update_data.get('success', False))
-            high_priority = bool(update_data.get('high_priority', False))
+
+            logger.debug(f'result:\n{result}')
+            # update_success = bool(update_data.get('success', False))
+            update_success = bool(result.get('success', False))
+
+            
+            # high_priority = bool(update_data.get('high_priority', False))
+            high_priority = bool(result.get('high_priority', False))
 
             if update_success:
                 self.last_updated = time.monotonic()
