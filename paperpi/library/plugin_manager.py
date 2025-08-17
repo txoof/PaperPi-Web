@@ -21,10 +21,11 @@ import logging
 from pathlib import Path
 import requests
 import uuid
-import importlib
 from typing import Any, List, Dict, Optional
 from dataclasses import dataclass, field
-
+import importlib.util
+from types import ModuleType
+from pathlib import Path
 
 
 try:
@@ -41,7 +42,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-# +
+# -
+
 @dataclass
 class PluginRecord:
     uuid: str
@@ -56,6 +58,8 @@ class PluginRecord:
         "dormant": False,
         "high_priority": False,
         "last_update_ts": 0.0,
+        "last_image_hash": None,
+        "last_write_ts": 0.0
     })
     obj: Optional["BasePlugin"] = None  
 
@@ -127,23 +131,64 @@ class PluginManager():
             raw=raw,
         )
 
+    def _load_module_from_file(self, file_path: Path, module_name: str) -> ModuleType:
+        """Load a Python module from an arbitrary file path."""
+        if not file_path.exists():
+            raise FileNotFoundError(f"Module file not found: {file_path}")
+        spec = importlib.util.spec_from_file_location(module_name, str(file_path))
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not create spec for {file_path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+        return mod
+    
+    def _load_attr(self, mod: ModuleType, attr_name: str):
+        """Get an attribute from a module with a clear error if missing."""
+        if not hasattr(mod, attr_name):
+            raise AttributeError(f"Module '{mod.__name__}' has no attribute '{attr_name}'")
+        return getattr(mod, attr_name)
 
+        
     def _load_plugin_class_from_path(self, plugin_type: str):
         plugin_file = (self._plugin_path / plugin_type / "plugin.py").resolve()
-        if not plugin_file or not plugin_file.exists():
-            raise FileNotFoundError(f'Plugin module not found for {plugin_type}: {plugin_file}')
+        mod = self._load_module_from_file(plugin_file, f"paperpi_plugin_{plugin_type}")
+        return self._load_attr(mod, "Plugin")
 
-        module_name = f'paperpi_plugin_{plugin_type}'
-        spec = importlib.util.spec_from_file_location(module_name, str(plugin_file))
-        if spec is None or spec.loader is None:
-            raise ImportError(f'Could not load spec for {plugin_file}')
+    def _layout_file_for(self, plugin_type: str) -> Path:
+        """Return {plugin_path}/{plugin_type}/layout.py"""
+        return (self._plugin_path / plugin_type / "layout.py").resolve()
 
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+    def _extract_layout_name(self, cfg: Dict[str, Any]) -> Optional[str]:
+        """
+        Prefer cfg['layout']['name'] if 'layout' is a dict; else cfg.get('layout_name').
+        """
+        layout = cfg.get("layout")
+        if isinstance(layout, dict) and "name" in layout:
+            return layout.get("name")
+        return cfg.get("layout_name")
 
-        if not hasattr(mod, "Plugin"):
-            raise AttributeError(f'{plugin_file} does not define a class named "Plugin"')
-        return getattr(mod, "Plugin")
+    def _load_layout_dict_from_path(self, plugin_type: str, layout_name: str) -> Dict[str, Any]:
+        """
+        Load a layout dictionary named `layout_name` from {plugin_path}/{plugin_type}/layout.py.
+        Expects the named attribute in the module to be a dict.
+        """
+        layout_file = self._layout_file_for(plugin_type)
+        mod = self._load_module_from_file(layout_file, f"paperpi_layout_{plugin_type}")
+        layout = getattr(mod, layout_name, None)
+        if layout is None:
+            raise AttributeError(f"{layout_file} has no layout dict named '{layout_name}'")
+        if not isinstance(layout, dict):
+            raise TypeError(f"{layout_file}:{layout_name} is not a dict (got {type(layout).__name__})")
+        return layout
+
+    # --- Public, simple wrappers for loaders (used by smoke tests & callers) ---
+    def load_plugin_class(self, plugin_name: str):
+        """Public wrapper: load class 'Plugin' from {plugin_path}/{plugin_name}/plugin.py."""
+        return self._load_plugin_class_from_path(plugin_name)
+
+    def load_layout_dict(self, plugin_name: str, layout_name: str) -> Dict[str, Any]:
+        """Public wrapper: load a layout dict named `layout_name` from {plugin_path}/{plugin_name}/layout.py."""
+        return self._load_layout_dict_from_path(plugin_name, layout_name)
     
     @property
     def plugin_path(self):
@@ -329,20 +374,45 @@ class PluginManager():
                     class_name = ''.join(part.capitalize() for part in module_name.split('_'))
                     self.logger.debug(f'Loading plugin class: {class_name} from {module_name}')
 
-                    # # import dynamically
-                    # mod = __import__(f'{self.plugin_path}.{module_name}', fromlist=[class_name])
-                    # cls = getattr(mod, class_name)
-
                     PluginClass = self._load_plugin_class_from_path(rec.plugin)
-                    
 
-                    # build the plugin
-                    rec.obj = PluginClass(
-                        name = plugin_name,
-                        uuid = rec.uuid,
-                        plugin_config = rec.plugin_config,
-                        plugin_params = rec.plugin_params
-                    )
+                    # determine layout name from config (supports {'layout': {'name': ...}} or 'layout_name')
+                    layout_name = self._extract_layout_name(rec.plugin_config)
+                    layout_dict = None
+                    if layout_name:
+                        try:
+                            layout_dict = self._load_layout_dict_from_path(rec.plugin, layout_name)
+                            self.logger.debug("Loaded layout '%s' for %s", layout_name, module_name)
+                        except Exception as le:
+                            # If a layout is specified but cannot be loaded, treat as build error
+                            raise RuntimeError(f"Failed to load layout '{layout_name}' for {module_name}: {le}") from le
+
+                    # build the plugin (pass layout if supported, else attach after)
+                    try:
+                        rec.obj = PluginClass(
+                            name=plugin_name,
+                            uuid=rec.uuid,
+                            plugin_config=rec.plugin_config,
+                            plugin_params=rec.plugin_params,
+                            layout=layout_dict
+                        )
+                    except TypeError:
+                        rec.obj = PluginClass(
+                            name=plugin_name,
+                            uuid=rec.uuid,
+                            plugin_config=rec.plugin_config,
+                            plugin_params=rec.plugin_params
+                        )
+                        if layout_dict is not None:
+                            # attach via common attribute names if constructor doesn't accept 'layout'
+                            if hasattr(rec.obj, "layout"):
+                                setattr(rec.obj, "layout", layout_dict)
+                            elif hasattr(rec.obj, "epd_layout"):
+                                setattr(rec.obj, "epd_layout", layout_dict)
+                            else:
+                                # last-resort stash
+                                setattr(rec.obj, "_layout_dict", layout_dict)
+
                     self.active_plugins.append(rec)
                 except Exception as e:
                     self.logger.error(f'Failed to build plugin {rec.plugin}: {e}')
@@ -373,6 +443,18 @@ logging.basicConfig(
 logging.getLogger("PluginManager").setLevel(logging.DEBUG)
 
 # +
+# --- Make the repo importable in this Jupyter kernel ---
+import sys, pathlib, logging
+
+# Adjust if your repo lives elsewhere:
+PROJECT_ROOT = pathlib.Path.home() / "src" / "PaperPi-Web"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Optional: show where we're importing from
+print("sys.path[0]:", sys.path[0])
+
+# +
 p = PluginManager(plugin_path='/home/pi/src/PaperPi-Web/paperpi/plugins/')
 p.load_from_daemon()
 p.plugin_path
@@ -383,6 +465,11 @@ p.build_plugins(vc)
 
 p.records[0].obj.update_data()
 
+
+# +
+p.records[1].obj.update()
+
+p.records[1].obj.image_hash
 # -
 
 p.records[0].obj.update(force=True)
