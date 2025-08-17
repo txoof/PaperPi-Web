@@ -16,7 +16,7 @@
 # %autoreload 2
 
 # +
-# from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod
 import time
 from pathlib import Path
 import importlib.util
@@ -26,8 +26,7 @@ import signal
 import hashlib
 from uuid import uuid4
 import sys
-import yaml
-
+from typing import Dict, Any
 import requests
 from PIL import Image
 
@@ -43,39 +42,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-# +
-# logger.setLevel(logging.DEBUG)
-
-# # Create or get the epdlib logger (including submodules)
-# epdlib_logger = logging.getLogger('epdlib')
-# epdlib_logger.setLevel(logging.INFO)
-# logging.getLogger('epdlib.Block').setLevel(logging.INFO)
-# logging.getLogger('epdlib.Layout').setLevel(logging.INFO)
-
-# # Stream handler for Jupyter notebooks
-# handler = logging.StreamHandler()
-# handler.setLevel(logging.DEBUG)
-
-# # Formatter for consistent and clean output
-# formatter = logging.Formatter(
-#     '%(asctime)s [%(levelname)s] [%(name)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'
-# )
-# handler.setFormatter(formatter)
-
-# # Attach handler to PaperPi logger (if not already attached)
-# if not logger.hasHandlers():
-#     logger.addHandler(handler)
-
-# # Attach handler to epdlib logger (if not already attached)
-# if not epdlib_logger.hasHandlers():
-#     epdlib_logger.addHandler(handler)
-
-# # Prevent logs from propagating to the root logger (avoids duplicates)
-# logger.propagate = False
-# epdlib_logger.propagate = False
-# -
-
-class BasePlugin():
+class BasePlugin(ABC):
     def __repr__(self):
         return f'Plugin({self.name})'
     
@@ -84,7 +51,7 @@ class BasePlugin():
     
     def __init__(
         self,
-        name: str = 'Unset',
+        name: str = f'Unset Plugin Name-{uuid4().hex[:5]}',
         uuid: str = None,
         duration: int = 90,
         config: dict = {},
@@ -107,7 +74,10 @@ class BasePlugin():
         self.uuid = uuid or 'self_set-' + str(uuid4())[:8]
         logger.debug("BasePlugin instance created.")
         logger.debug(f"Name: {self.name}, uuid: {self.uuid}")
-        self.update_function = self.default_update_function
+        # self.update_function = self.default_update_function
+        self.disabled = False
+        self.consecutive_failures = 0
+        self.state = "idle"
         
         self.duration = duration
         self.refresh_interval = refresh_interval
@@ -123,7 +93,6 @@ class BasePlugin():
         self.data = {}
         self.agent_string = "PaperPi"
         self.layout = layout
-        self.update_data = None
 
         # Cache directory (initialize before cache session)
         self.cache_root = cache_root
@@ -137,35 +106,44 @@ class BasePlugin():
         # if self.plugin_path:
         #     self.load_update_function()
 
-        
-    @property
-    def update_function(self):
-        '''update function provided by the plugin module
-        
-        The update_function is called by the update method to provide status and data for 
-        the Plugin.
-        
-        Args:
-            function(function): function that accepts self, *args, **kwargs
-            
-        Returns:
-            tuple of is_updated(bool), data(dict), priority(int)'''
-        return self._update_function
-    
-    @update_function.setter
-    def update_function(self, function):
-        if not function:
-            raise TypeError('Must be of type function')
-        else:
-            self._update_function = function.__get__(self)
 
-    def default_update_function(self, *args, **kwargs) -> dict:
+    @abstractmethod
+    def update_data(self, **kwargs) -> Dict[str, Any]:
         """
-        Default no-op update function for plugins that don't implement their own.
-        Returns a success=False indicating no update was performed.
+        Subclasses must implement. Should return:
+            {'success': bool, 'data': dict, 'high_priority': bool}
         """
-        logger.warning(f"{self.name} - Running default update_function. No update provided.")
-        return {'data': {}, 'success': False}
+        raise NotImplementedError
+
+
+    # @property
+    # def update_function(self):
+    #     '''update function provided by the plugin module
+        
+    #     The update_function is called by the update method to provide status and data for 
+    #     the Plugin.
+        
+    #     Args:
+    #         function(function): function that accepts self, *args, **kwargs
+            
+    #     Returns:
+    #         tuple of is_updated(bool), data(dict), priority(int)'''
+    #     return self._update_function
+
+    # @update_function.setter
+    # def update_function(self, function):
+    #     if not function:
+    #         raise TypeError('Must be of type function')
+    #     else:
+    #         self._update_function = function.__get__(self)
+
+    # def default_update_function(self, *args, **kwargs) -> dict:
+        # """
+        # Default no-op update function for plugins that don't implement their own.
+        # Returns a success=False indicating no update was performed.
+        # """
+        # logger.warning(f"{self.name} - Running default update_function. No update provided.")
+        # return {'data': {}, 'success': False}
     
 
     def update(self, *args, force=False, **kwargs) -> bool:
@@ -192,17 +170,18 @@ class BasePlugin():
         signal.alarm(self.plugin_timeout)  # e.g., 30s default timeout
 
         try:
-            update_data = self.update_function(*args, **kwargs)
-            data = update_data.get('data', {})
-            update_success = update_data.get('success', False)
-            high_priority = update_data.get('high_priority', False)
+            result = self.update_data(*args, **kwargs)
+            
+            data = result.get('data', {})
+            update_success = bool(update_data.get('success', False))
+            high_priority = bool(update_data.get('high_priority', False))
 
             if update_success:
                 self.last_updated = time.monotonic()
                 logger.info(f"{self.name} - Update successful.")
 
 
-                self.data = update_data
+                self.data = result
                 self.epd_layout.update_contents(data)
                 
                 # Generate or update the final image
@@ -494,6 +473,29 @@ class BasePlugin():
     def timeout_handler(self, signum, frame):
         """Raise a timeout error when the plugin update hangs."""
         raise PluginTimeoutError("Plugin update timed out.", plugin_name=self.name)
+
+    def mark_failure(self, reason: str = "None Provided") -> None:
+        """
+        Increment failure counter; PluginManager decides when to disable using this information
+        """
+        self.consecutive_failures += 1
+        logger.warning(f'{self.name} - failure #{self.consecutive_failures} with reason: {reason}')
+
+    def mark_success(self) -> None:
+        """
+        Clear consecutive failure counter after a good update
+        """
+        if self.consecutive_failures:
+            logger.info(f'{self.name} - resetting consecutive_failure count {self.consecutive_failures} -> 0')
+            self.consecutive_failures = 0
+
+    def setup(self) -> None:
+        """Optional hook for plugin-specific initialization."""
+        logger.debug("%s - setup()", self.name)
+    
+    def teardown(self) -> None:
+        """Optional hook for plugin-specific cleanup."""
+        logger.debug("%s - teardown()", self.name)
 
 # +
 # import random
