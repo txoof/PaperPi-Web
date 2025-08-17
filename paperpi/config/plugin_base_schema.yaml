@@ -11,6 +11,7 @@ duration:
     type: int
     default: 120
     description: 'Amount of time in seconds to display plugin'
+    range: [10, 43000]
 refresh_interval:
     type: int
     default: 60
