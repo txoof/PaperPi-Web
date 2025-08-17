@@ -60,12 +60,6 @@ class PluginRecord:
     obj: Optional["BasePlugin"] = None  
 
 
-# -
-
-
-
-_plugin_file('word_clock')
-
 
 # +
 class PluginManager():
@@ -149,7 +143,7 @@ class PluginManager():
 
         if not hasattr(mod, "Plugin"):
             raise AttributeError(f'{plugin_file} does not define a class named "Plugin"')
-        return getattr(mod, Plugin)
+        return getattr(mod, "Plugin")
     
     @property
     def plugin_path(self):
@@ -331,6 +325,7 @@ class PluginManager():
                     # Convention: plugins live in self.plugin_path / <plugin_name>.py
                     # And class is capitalized, e.g. WordClock for "word_clock"
                     module_name = rec.plugin
+                    plugin_name = rec.plugin_config.get('name', None)
                     class_name = ''.join(part.capitalize() for part in module_name.split('_'))
                     self.logger.debug(f'Loading plugin class: {class_name} from {module_name}')
 
@@ -343,6 +338,8 @@ class PluginManager():
 
                     # build the plugin
                     rec.obj = PluginClass(
+                        name = plugin_name,
+                        uuid = rec.uuid,
                         plugin_config = rec.plugin_config,
                         plugin_params = rec.plugin_params
                     )
@@ -374,8 +371,8 @@ logging.basicConfig(
 
 # Optional: narrow to your module logger
 logging.getLogger("PluginManager").setLevel(logging.DEBUG)
-# -
 
+# +
 p = PluginManager(plugin_path='/home/pi/src/PaperPi-Web/paperpi/plugins/')
 p.load_from_daemon()
 p.plugin_path
@@ -384,10 +381,24 @@ vc = p.validate_config()
 
 p.build_plugins(vc)
 
-p._load_plugin_class_from_path('word_clock')
+p.records[0].obj.update_data()
 
-pf = Path('/home/pi/src/PaperPi-Web/paperpi/plugins/')
-mn = f'pp_plugin_word_clock'
-spec = importlib.util.spec_from_file_location(mn, str(pf))
+# -
+
+p.records[0].obj.update(force=True)
+
+p.records[0]
+
+plugin = p._load_plugin_class_from_path('word_clock')
+
+# +
+
+PluginClass = p._load_plugin_class_from_path("word_clock")
+print(PluginClass)             # should print <class '...Plugin'>
+inst = PluginClass(plugin_config={}, plugin_params={})
+print(type(inst).__name__)     # Plugin
+# -
+
+inst.update()
 
 print(spec)
