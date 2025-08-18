@@ -10,3 +10,8 @@ high_priority_rate:
   type: float
   default: 0.2
   description: 'Rate at which plugin will rise to "high priority" status'
+max_sleep_time:
+  type: int
+  default: 20
+  range: [1, 120]
+  description: 'Maximum amount of time plugin will stop responding to simulate slow response'
