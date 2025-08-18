@@ -64,6 +64,14 @@ class PluginRecord:
     obj: Optional["BasePlugin"] = None  
 
 
+@dataclass
+class TickResult:
+    needs_write: bool = False
+    fg_uuid: Optional[str] = None
+    reason: Optional[str] = None
+    image: Optional[Any] = None
+    image_hash: Optional[str] = None
+
 
 # +
 class PluginManager():
@@ -110,6 +118,24 @@ class PluginManager():
         # self._transient_config_keys = ['uuid', 'plugin_status']
         self.load_from_daemon()
 
+        self._fg_index: int = 0
+
+    def _foreground(self):
+        """
+        Return the current foreground PluginRecord, if any.
+        """
+        if not self.active_plugins:
+            return None
+        idx = max(0, min(self._fg_index, len(self.active_plugins) - 1))
+        return self.active_plugins[idx]
+
+    def _advance_rotation(self):
+        """
+        Advance to the next active plugin (round-robin).
+        """
+        if self.active_plugins:
+            self._fg_index = (self._fg_index + 1) % len(self.active_plugins)
+    
     def _new_uuid(self) -> str:
         return str(uuid.uuid4())
 
@@ -462,9 +488,23 @@ p.plugin_path
 vc = p.validate_config()
 
 p.build_plugins(vc)
+# -
 
-p.records[0].obj.update_data()
 
+fg = p._foreground()
+print("FG#1", fg.plugin, fg.plugin_config.get("name"), fg.uuid)
+fg.obj.update()
+fg.obj.image
+
+p._advance_rotation()
+print("FG#2", p._foreground().plugin)
+p._foreground().obj.update()
+p._foreground().obj.image
+
+p._advance_rotation()
+print("FG#3", p._foreground().plugin)
+p._foreground().obj.update()
+p._foreground().obj.image
 
 # +
 p.records[1].obj.update()
