@@ -68,7 +68,7 @@
 
 # +
 import logging
-from time import time, sleep, 
+from time import time, sleep
 from datetime import datetime
 import random
 from pathlib import Path
