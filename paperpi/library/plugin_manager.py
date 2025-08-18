@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 import importlib.util
 from types import ModuleType
 from pathlib import Path
+from time import monotonic
+
 
 
 try:
@@ -207,6 +209,40 @@ class PluginManager():
             raise TypeError(f"{layout_file}:{layout_name} is not a dict (got {type(layout).__name__})")
         return layout
 
+    def _safe_plugin_update(self, rec, force: bool = False) -> bool:
+        """
+        Safely call rec.obj.update(); manage failure counters and timestamps
+
+        Returns True on succes, False on failures/exception
+        """
+        obj = getattr(rec, "obj", None)
+        # fail fast
+        if not obj:
+            return False
+
+        try:
+            ok = obj.update(force=force)
+        except Exception as e:
+            self.logger.error(f"Update exception | {rec.plugin}: {e}")
+            rec.status['consecutive_failures'] = rec.status.get('consecutive_failures', 0) + 1
+
+        if not isinstance(ok, bool):
+            # be strict; treat non-bool as a failure
+            self.logger.warning(f'Plugin {rec.plugin} returned non-bool value: {ok}')
+            ok = False
+
+        if ok:
+            # zero out consecutive failures
+            rec.status['consecutive_failures'] = 0
+            rec.status['last_update_ts'] = monotonic()
+            # track high_priority state
+            rec.status["high_priority"] = bool(getattr(obj, "high_priority", False))
+            return True
+
+        # failure
+        rec.status["consecutive_failures"] = rec.status.get("consecutive_failures", 0) + 1
+        return False
+    
     # --- Public, simple wrappers for loaders (used by smoke tests & callers) ---
     def load_plugin_class(self, plugin_name: str):
         """Public wrapper: load class 'Plugin' from {plugin_path}/{plugin_name}/plugin.py."""
@@ -439,7 +475,14 @@ class PluginManager():
                                 # last-resort stash
                                 setattr(rec.obj, "_layout_dict", layout_dict)
 
-                    self.active_plugins.append(rec)
+                    
+                    # classify: dormant plugins are saved to the appropriate list
+                    is_dormant = bool(getattr(rec.obj, 'dormant', False)) or rec.status.get('dormant')
+                    rec.status['dormant'] = is_dormant
+                    if is_dormant:
+                        self.dormant_plugins.append(rec)
+                    else:
+                        self.active_plugins.append(rec)
                 except Exception as e:
                     self.logger.error(f'Failed to build plugin {rec.plugin}: {e}')
                     rec.status['disabled'] = True
@@ -449,7 +492,7 @@ class PluginManager():
                 self.disabled_plugins.append(rec)
 
         self.logger.info(
-            f'Plugin build complete: {len(self.active_plugins)} active | {len(self.disabled_plugins)} disabled'
+            f'Plugin build complete: {len(self.active_plugins)} active | {len(self.dormant_plugins)} dormant | {len(self.disabled_plugins)} disabled'
         )
         
 
@@ -457,28 +500,37 @@ class PluginManager():
 
 # +
 import sys
+import pathlib
+import logging
 
-# Configure root logger to output to stdout
-logging.basicConfig(
-    level=logging.DEBUG,  # or INFO
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-
-# Optional: narrow to your module logger
-logging.getLogger("PluginManager").setLevel(logging.DEBUG)
-
-# +
-# --- Make the repo importable in this Jupyter kernel ---
-import sys, pathlib, logging
-
-# Adjust if your repo lives elsewhere:
-PROJECT_ROOT = pathlib.Path.home() / "src" / "PaperPi-Web"
+# 1) Make the repo importable
+PROJECT_ROOT = pathlib.Path.home() / 'src' / 'PaperPi-Web'
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Optional: show where we're importing from
-print("sys.path[0]:", sys.path[0])
+# 2) Reset and configure logging for Jupyter
+# force=True reconfigures even if another handler is already attached
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
+)
+
+# 3) Set levels for your package/module loggers
+# Adjust names to match where your class logs from.
+for name in [
+    'paperpi',                         # whole package
+    'paperpi.plugins',                 # subpackage
+    'paperpi.plugins.plugin_manager',  # module with the class, if applicable
+    'PluginManager',                   # if someone used this bare name
+]:
+    logging.getLogger(name).setLevel(logging.DEBUG)
+
+# Optional: show effective config for a target logger
+lg = logging.getLogger('paperpi.plugins.plugin_manager')
+print('effective level:', logging.getLevelName(lg.getEffectiveLevel()))
+print('handlers:', lg.handlers or logging.getLogger().handlers)
 
 # +
 p = PluginManager(plugin_path='/home/pi/src/PaperPi-Web/paperpi/plugins/')
@@ -490,6 +542,10 @@ vc = p.validate_config()
 p.build_plugins(vc)
 # -
 
+
+p.active_plugins
+
+p.dormant_plugins
 
 fg = p._foreground()
 print("FG#1", fg.plugin, fg.plugin_config.get("name"), fg.uuid)
