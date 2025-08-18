@@ -1,5 +1,5 @@
 # debugging plugin layouts
-from paperpi.library.font_search 
+from paperpi.library.font_search import locate_path
 font_path = locate_path('fonts')
 
 
