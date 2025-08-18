@@ -17,74 +17,66 @@
 # %autoreload 2
 
 # +
-#code snip that makes path work so package imports and relative imports work
-# both in jupyter and as a script
+# #code snip that makes path work so package imports and relative imports work
+# # both in jupyter and as a script
 
-import sys
-from pathlib import Path
+# import sys
+# from pathlib import Path
 
-def in_notebook() -> bool:
-    try:
-        from IPython import get_ipython  # noqa: F401
-        return True
-    except Exception:
-        return False
+# def in_notebook() -> bool:
+#     try:
+#         from IPython import get_ipython  # noqa: F401
+#         return True
+#     except Exception:
+#         return False
 
-def here_dir() -> Path:
-    # When executed as a script, __file__ exists
-    if '__file__' in globals():
-        return Path(__file__).resolve().parent
-    # In a notebook, fall back to the current working directory
-    return Path.cwd().resolve()
+# def here_dir() -> Path:
+#     # When executed as a script, __file__ exists
+#     if '__file__' in globals():
+#         return Path(__file__).resolve().parent
+#     # In a notebook, fall back to the current working directory
+#     return Path.cwd().resolve()
 
-def find_project_root(start: Path, markers=('pyproject.toml', 'setup.cfg', '.git', 'paperpi')):
-    cur = start
-    for _ in range(20):  # safety bound
-        # if any marker file or directory exists here, treat this as root
-        if any((cur / m).exists() for m in markers):
-            return cur
-        if cur.parent == cur:
-            break
-        cur = cur.parent
-    return None
+# def find_project_root(start: Path, markers=('pyproject.toml', 'setup.cfg', '.git', 'paperpi')):
+#     cur = start
+#     for _ in range(20):  # safety bound
+#         # if any marker file or directory exists here, treat this as root
+#         if any((cur / m).exists() for m in markers):
+#             return cur
+#         if cur.parent == cur:
+#             break
+#         cur = cur.parent
+#     return None
 
-# 1) Determine where we are
-_nb_or_script_dir = here_dir()
+# # 1) Determine where we are
+# _nb_or_script_dir = here_dir()
 
-# 2) Locate the project root by walking upward until we find a marker
-_project_root = find_project_root(_nb_or_script_dir)
+# # 2) Locate the project root by walking upward until we find a marker
+# _project_root = find_project_root(_nb_or_script_dir)
 
-# 3) Add paths in the right order
-#    - Ensure local directory is first so 'import constants' resolves locally
-#    - Ensure project root is also present so package imports work
-paths_to_add = []
-if str(_nb_or_script_dir) not in sys.path:
-    paths_to_add.append(str(_nb_or_script_dir))
-if _project_root and str(_project_root) not in sys.path:
-    paths_to_add.append(str(_project_root))
+# # 3) Add paths in the right order
+# #    - Ensure local directory is first so 'import constants' resolves locally
+# #    - Ensure project root is also present so package imports work
+# paths_to_add = []
+# if str(_nb_or_script_dir) not in sys.path:
+#     paths_to_add.append(str(_nb_or_script_dir))
+# if _project_root and str(_project_root) not in sys.path:
+#     paths_to_add.append(str(_project_root))
 
-# Prepend to sys.path, preserving existing entries
-sys.path[:0] = paths_to_add
+# # Prepend to sys.path, preserving existing entries
+# sys.path[:0] = paths_to_add
 
 # +
 import logging
+from time import time, sleep, 
 from datetime import datetime
-from time import time
 import random
 from pathlib import Path
 
 from paperpi.library.base_plugin import BasePlugin
 # -
 
-# two different import modes for development or distribution
-try:
-    # import from other modules above this level
-    from . import layout
-    from . import constants
-except ImportError:
-    import constants
-    # development in jupyter notebook
-    import layout
+from paperpi.plugins.debugging import constants
 
 
 logger = logging.getLogger(__name__)
@@ -98,18 +90,32 @@ def remove_non_alphanumeric(s):
 
 class Plugin(BasePlugin):
     """
-    Basic Clock plugin: renders time
+    Debugging plugin
 
     Expects BasePlugin to provide:
       - self.name
       - self.screen_mode, self.layout (optional usage)
       - any config/params via self.config / self.params 
     """
-    def __init__(self, **kwargs):
+    def __init__(self, 
+                 title=constants.default_title,
+                 crash_rate=constants.default_max_crash_rate,
+                 max_priority_rate=constants.default_max_priority_rate,
+                 max_sleep_time=constants.default_max_sleep_time,
+                 **kwargs):
         super().__init__(**kwargs)
-        logger.info('Initing basic_clock plugin instance')
+        self.dormant = True
+        self.first_run = True
         
-    def update_data(self, *, now: str | None = None, **kwargs) -> dict:
+        logger.info('Initing debugging plugin instance')
+
+        self.title = title
+        self.crash_rate = crash_rate
+        self.max_priority_rate = max_priority_rate
+        self.max_sleep_time = max_sleep_time
+        
+        
+    def update_data(self, **kwargs) -> dict:
         """
         update function for debugging plugin provides title, time, crash rate
     
@@ -127,25 +133,18 @@ class Plugin(BasePlugin):
 
         crash = False
         success = False
-        title = self.config.get('title', None)
-        max_priority_rate = self.config.get('max_priority_rate', None)
-        crash_rate = self.config.get('crash_rate', None)
-        
-        if not title:
-            constants.default_title
-    
-        if not crash_rate:
-            crash_rate = constants.default_crash_rate
-    
-        if not max_priority_rate:
-            max_priority_rate = constants.default_max_priority_rate
+        title = self.title
+        max_priority_rate = self.max_priority_rate
+        crash_rate = self.crash_rate
+        max_sleep_time = self.max_sleep_time
         
         random.seed(time())
         rand_crash = random.random()
         rand_priority = random.random()
+        rand_pause = random.randint(0, max_sleep_time)
     
-    
-        logger.info(f'rand_priority: {rand_priority}, max_priority_rate: {max_priority_rate}')
+        logger.info(f'rand_pause: {rand_pause}, rand_crash: {rand_crash}, rand_priority: {rand_priority}')    
+
         
         if rand_priority <= max_priority_rate:
             high_priority = True
@@ -161,14 +160,28 @@ class Plugin(BasePlugin):
             'priority': f'high_priority: {high_priority}',
         }
     
+        logger.info(f'rand_priority: {rand_priority}, max_priority_rate: {max_priority_rate}')        
+        
+        if self.first_run:
+            self.first_run = False
+            logger.debug('first run: skipping crash')
+            return {'data': data, 'success': True, 'high_priority': False}
+
+
         if rand_crash <= crash_rate:
             logger.info('Random CRASH!')
             crash = True
+        else:
+            logger.info(f'sleeping for: {rand_pause}')
+            sleep(rand_pause)
         
         if crash:
             raise Exception(f'random crash occured')
         else:
             success = True
             
-        is_updated = True
         return {'data': data, 'success': success, 'high_priority': high_priority}
+
+
+
+
